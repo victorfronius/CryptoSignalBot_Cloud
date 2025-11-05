@@ -1,24 +1,32 @@
 from flask import Flask, request
-import requests
 import os
+import requests
 
 app = Flask(__name__)
 
-TELEGRAM_TOKEN = os.environ.get("8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4")
-CHAT_ID = os.environ.get("5411759224")
-
 @app.route('/')
 def home():
-    return "CryptoSignalBot online ✅"
+    return "✅ Бот работает на Render!"
+
+@app.route('/test')
+def test():
+    return "✅ Test OK — бот на связи!"
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    data = request.get_json(force=True)
-    text = f"📈 {data}"
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text}
-    requests.post(url, json=payload)
-    return "OK", 200
+    data = request.get_json()
+    token = os.environ.get("TELEGRAM_TOKEN")
+    chat_id = os.environ.get("CHAT_ID")
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    if data and "signal" in data:
+        text = f"Signal: {data['signal']}\nSymbol: {data.get('symbol')}\nPrice: {data.get('price')}"
+        requests.post(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            json={"chat_id": chat_id, "text": text}
+        )
+        return "OK", 200
+
+    return "No data", 400
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=10000)
