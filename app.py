@@ -65,12 +65,8 @@ def webhook():
         return "Error", 500
 
 
-@app.route('/test', methods=['GET'])
-def test():
-    return "OK " + datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 200
-
-
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
 
