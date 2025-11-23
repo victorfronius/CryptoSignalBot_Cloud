@@ -13,7 +13,13 @@ def send_to_telegram(text):
     payload = {"chat_id": CHAT_ID, "text": text}
     r = requests.post(url, json=payload)
     print(">>> Ответ Telegram:", r.status_code, r.text)
+@app.route('/')
+def home():
+    return "Bot is running!", 200
 
+@app.route('/test')
+def test():
+    return "Webhook tester OK", 200
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -66,4 +72,5 @@ def test():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)
+
 
