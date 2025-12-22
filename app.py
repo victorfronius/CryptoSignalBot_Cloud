@@ -16,8 +16,8 @@ CHAT_ID = "5411759224"
 # ==========================
 #  BINGX API
 # ==========================
-BINGX_API_KEY = "0Vlr5cQ6Sut9R8yj4a739rbpS5DUDpzloLIPgbV8SX0XvChY6HkRFlD6YXu4y3cl3BJOCoLL8RLgeIEBeA"
-BINGX_SECRET_KEY = "N5jgsWdsH4BEAvfzz3ehudturqXSEWjYNCpGo6N8brdXRl11YgkCSwpPbHy48DtBGHMjg7ywkcJY7eOdy43nQ"
+BINGX_API_KEY = "tfi2cWlGNK9eSpDJlxNks2w7DBiT6lTlUiXLjkBQhe7sIgVv7HKWiByVhDSagmrZBSgb8Hoaog1N4HzYffQ"
+BINGX_SECRET_KEY = "SnNoEvoc1ZBhwHYMzi1KfAIvvgnI8eWs6b4fyjo9i7u0pcsHijJ7YIEngeHUVD19YxLeyrp2yE9UPjYAqM65w"
 
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
@@ -386,6 +386,7 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
