@@ -16,17 +16,17 @@ CHAT_ID = "5411759224"
 # ==========================
 #  BINGX API
 # ==========================
-BINGX_API_KEY = "fQfVs0DWtmnPwJEpemQwmNb0KdYPZgirUucvkcHYha5LvZf8YR5DTONY4yGSjbMUSy1cymF966OxPawKe45qg"
-BINGX_SECRET_KEY = "wOsypXsbAM9EHmuiCXIq5kPXzG1Yz1QCQ9Gb858IiAvCGSbXANfPQp036yThVy8ixti8Jh2H8BgXOoMvJ0xQ "
+BINGX_API_KEY = "0Vlr5cQ6Sut9R8yj4a739rbpS5DUDpzloLIPgbV8SX0XvChY6HkRFlD6YXu4y3cl3BJOCoLL8RLgeIEBeA"
+BINGX_SECRET_KEY = "N5jgsWdsH4BEAvfzz3ehudturqXSEWjYNCpGo6N8brdXRl11YgkCSwpPbHy48DtBGHMjg7ywkcJY7eOdy43nQ"
 
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
 # ==========================
 #  НАСТРОЙКИ ТОРГОВЛИ
 # ==========================
-ENABLE_TRADING = False        # <<< ПОКА ВЫКЛЮЧЕНО
-POSITION_SIZE_USDT = 10       # размер позиции в USDT
-LEVERAGE = 5                  # плечо
+ENABLE_TRADING = True        # <<< ВКЛЮЧИТЬ ТОРГОВЛЮ
+POSITION_SIZE_USDT = 5       # размер позиции 5 USDT
+LEVERAGE = 10                  # плечо 10
 USE_MARKET_ORDER = True       # True = маркет, False = лимит
 
 # ==========================
@@ -386,6 +386,7 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
