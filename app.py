@@ -95,7 +95,8 @@ def bingx_request(method: str, endpoint: str, params: dict | None = None) -> dic
 
     # timestamp обязателен
     params["timestamp"] = int(time.time() * 1000)
-
+if method == "POST":
+          params["recvWindow"] = 5000
     # подпись
     signature = create_signature(params, BINGX_SECRET_KEY)
     params["signature"] = signature
@@ -386,6 +387,7 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
