@@ -3,6 +3,7 @@ import requests
 import hmac
 import hashlib
 import time
+import os
 from datetime import datetime
 
 app = Flask(__name__)
@@ -10,24 +11,24 @@ app = Flask(__name__)
 # ==========================
 #  TELEGRAM
 # ==========================
-BOT_TOKEN = "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4"
-CHAT_ID = "5411759224"
+BOT_TOKEN = os.getenv("BOT_TOKEN", "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4")
+CHAT_ID = os.getenv("CHAT_ID", "5411759224")
 
 # ==========================
 #  BINGX API
 # ==========================
-BINGX_API_KEY = "tfi2cWlGNK9eSpDJlxNks2w7DBiT6lTlUiXLjkBQhe7sIgVv7HKWiByVhDSagmrZBSgb8Hoaog1N4HzYffQ"
-BINGX_SECRET_KEY = "SnNoEvoc1ZBhwHYMzi1KfAIvvgnI8eWs6b4fyjo9i7u0pcsHijJ7YIEngeHUVD19YxLeyrp2yE9UPjYAqM65w"
+BINGX_API_KEY = os.getenv("BINGX_API_KEY", "tfi2cWlGNK9eSpDJlxNks2w7DBiT6lTlUiXLjkBQhe7sIgVv7HKWiByVhDSagmrZBSgb8Hoaog1N4HzYffQ")
+BINGX_SECRET_KEY = os.getenv("BINGX_SECRET_KEY", "SnNoEvoc1ZBhwHYMzi1KfAIvvgnI8eWs6b4fyjo9i7u0pcsHijJ7YIEngeHUVD19YxLeyrp2yE9UPjYAqM65w")
 
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
 # ==========================
 #  НАСТРОЙКИ ТОРГОВЛИ
 # ==========================
-ENABLE_TRADING = True        # <<< ВКЛЮЧИТЬ ТОРГОВЛЮ
-POSITION_SIZE_USDT = 5       # размер позиции 5 USDT
-LEVERAGE = 10                  # плечо 10
-USE_MARKET_ORDER = True       # True = маркет, False = лимит
+ENABLE_TRADING = True
+POSITION_SIZE_USDT = 5
+LEVERAGE = 10
+USE_MARKET_ORDER = True
 
 # ==========================
 #  СООТВЕТСТВИЕ СИМВОЛОВ
@@ -59,13 +60,13 @@ SYMBOL_MAP = {
     "DOTUSDT.P": "DOT-USDT",
 }
 
-# Precision для разных символов (количество знаков после запятой)
+# Precision для разных символов
 QUANTITY_PRECISION = {
-    "BTC-USDT": 3,   # 0.001
-    "ETH-USDT": 2,   # 0.01
+    "BTC-USDT": 3,
+    "ETH-USDT": 2,
     "BNB-USDT": 2,
     "SOL-USDT": 1,
-    "XRP-USDT": 0,   # целое число
+    "XRP-USDT": 0,
     "ADA-USDT": 0,
     "DOGE-USDT": 0,
     "AVAX-USDT": 1,
@@ -95,8 +96,10 @@ def bingx_request(method: str, endpoint: str, params: dict | None = None) -> dic
 
     # timestamp обязателен
     params["timestamp"] = int(time.time() * 1000)
-if method == "POST":
-          params["recvWindow"] = 5000
+    
+    if method == "POST":
+        params["recvWindow"] = 5000
+    
     # подпись
     signature = create_signature(params, BINGX_SECRET_KEY)
     params["signature"] = signature
@@ -112,13 +115,12 @@ if method == "POST":
         if method == "GET":
             r = requests.get(url, params=params, headers=headers, timeout=10)
         elif method == "POST":
-            # BingX требует params в query string для POST тоже
             r = requests.post(url, params=params, headers=headers, timeout=10)
         else:
             r = requests.request(method, url, params=params, headers=headers, timeout=10)
 
         response = r.json()
-        print(f"BingX response: {response}")  # для отладки
+        print(f"BingX response: {response}")
         return response
     except Exception as e:
         print(f"BingX error: {e}")
@@ -128,6 +130,35 @@ if method == "POST":
 def get_account_balance():
     endpoint = "/openApi/swap/v2/user/balance"
     return bingx_request("GET", endpoint)
+
+
+def get_open_positions():
+    """Получить открытые позиции"""
+    endpoint = "/openApi/swap/v2/user/positions"
+    return bingx_request("GET", endpoint)
+
+
+def has_open_position(symbol: str, side: str) -> bool:
+    """Проверить, есть ли уже открытая позиция"""
+    positions = get_open_positions()
+    
+    if positions.get("code") != 0:
+        return False
+    
+    data = positions.get("data", [])
+    
+    for pos in data:
+        if pos.get("symbol") == symbol:
+            position_amt = float(pos.get("positionAmt", 0))
+            
+            # Если LONG и позиция положительная
+            if side == "BUY" and position_amt > 0:
+                return True
+            # Если SHORT и позиция отрицательная
+            if side == "SELL" and position_amt < 0:
+                return True
+    
+    return False
 
 
 def set_leverage(symbol: str, leverage: int):
@@ -146,7 +177,7 @@ def calculate_quantity(symbol: str, usdt_amount: float, current_price: float) ->
         return 0.0
     
     raw_qty = usdt_amount / current_price
-    precision = QUANTITY_PRECISION.get(symbol, 2)  # по умолчанию 2 знака
+    precision = QUANTITY_PRECISION.get(symbol, 2)
     
     return round(raw_qty, precision)
 
@@ -170,10 +201,10 @@ def place_order(symbol: str, side: str, quantity: float, price: float | None = N
 
     params = {
         "symbol": symbol,
-        "side": side,  # BUY / SELL
+        "side": side,
         "positionSide": "LONG" if side == "BUY" else "SHORT",
         "type": "MARKET" if USE_MARKET_ORDER else "LIMIT",
-        "quantity": str(quantity),  # BingX требует строку
+        "quantity": str(quantity),
     }
 
     if not USE_MARKET_ORDER and price is not None:
@@ -236,9 +267,12 @@ def home():
 def test():
     """Тестовый endpoint"""
     balance = get_account_balance()
+    positions = get_open_positions()
+    
     return {
         "status": "OK",
         "balance": balance,
+        "positions": positions,
         "settings": {
             "trading_enabled": ENABLE_TRADING,
             "position_size": POSITION_SIZE_USDT,
@@ -273,10 +307,7 @@ def webhook():
         sl = data.get("sl", "na")
 
         # Конвертация символа
-        symbol_bingx = SYMBOL_MAP.get(symbol_tv)
-        if not symbol_bingx:
-            print(f"Unknown symbol: {symbol_tv}")
-            symbol_bingx = symbol_tv  # используем как есть
+        symbol_bingx = SYMBOL_MAP.get(symbol_tv, symbol_tv)
 
         # Логирование
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -290,6 +321,26 @@ def webhook():
         # ==========================
         if ENABLE_TRADING and BINGX_API_KEY != "YOUR_BINGX_API_KEY":
             print(f"🤖 Auto-trading: {signal} {symbol_bingx}")
+
+            # Определяем сторону
+            side = "BUY" if direction == "LONG" else "SELL"
+
+            # ПРОВЕРКА ДУБЛЕЙ
+            if has_open_position(symbol_bingx, side):
+                status = "⚠️ ПРОПУЩЕН: Позиция уже открыта"
+                order_id = "N/A"
+                message = f"""⚠️ <b>ДУБЛЬ ПОЗИЦИИ</b>
+
+📊 <b>Сигнал:</b> {signal}
+💱 <b>Символ:</b> {symbol_bingx}
+📈 <b>Направление:</b> {direction}
+
+❌ Позиция уже открыта, сигнал пропущен
+
+⏰ {timestamp}"""
+                
+                send_to_telegram(message)
+                return "Position already exists", 200
 
             # 1. Установить плечо
             lev_result = set_leverage(symbol_bingx, LEVERAGE)
@@ -311,7 +362,6 @@ def webhook():
                 order_id = "N/A"
             else:
                 # 4. Разместить ордер
-                side = "BUY" if direction == "LONG" else "SELL"
                 order_result = place_order(symbol_bingx, side, quantity)
                 print(f"Order result: {order_result}")
 
@@ -354,7 +404,7 @@ def webhook():
 🛑 <b>Stop Loss:</b> {sl}
 
 🆔 <b>Order ID:</b> {order_id}
-⏱ <b>Таймфрейм:</b> {tf}m
+⏱️ <b>Таймфрейм:</b> {tf}m
 ⏰ {timestamp}"""
         else:
             # Только уведомление
@@ -364,7 +414,7 @@ def webhook():
 💱 <b>Символ:</b> {symbol_tv}
 📈 <b>Направление:</b> {direction}
 💰 <b>Цена входа:</b> {price}
-⏱ <b>Таймфрейм:</b> {tf}m
+⏱️ <b>Таймфрейм:</b> {tf}m
 
 🎯 <b>Take Profit:</b>
   TP1: {tp1}
