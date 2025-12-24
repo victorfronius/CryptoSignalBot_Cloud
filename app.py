@@ -31,7 +31,7 @@ LEVERAGE = 10
 USE_MARKET_ORDER = True
 
 # ==========================
-#  СООТВЕТСТВИЕ СИМВОЛОВ
+#  СООТВЕТСТВИЕ СИМВОЛОВ - 25 ПАР
 # ==========================
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT",
@@ -46,6 +46,19 @@ SYMBOL_MAP = {
     "DOTUSDT": "DOT-USDT",
     "TRXUSDT": "TRX-USDT",
     "LINKUSDT": "LINK-USDT",
+    "ARBUSDT": "ARB-USDT",
+    "PEPEUSDT": "PEPE-USDT",
+    "SHIBUSDT": "SHIB-USDT",
+    "FLOKIUSDT": "FLOKI-USDT",
+    "FTMUSDT": "FTM-USDT",
+    "NEARUSDT": "NEAR-USDT",
+    "ATOMUSDT": "ATOM-USDT",
+    "OPUSDT": "OP-USDT",
+    "APTUSDT": "APT-USDT",
+    "IMXUSDT": "IMX-USDT",
+    "LDOUSDT": "LDO-USDT",
+    "WLDUSDT": "WLD-USDT",
+    "INJUSDT": "INJ-USDT",
     "BTCUSDT.P": "BTC-USDT",
     "ETHUSDT.P": "ETH-USDT",
     "BNBUSDT.P": "BNB-USDT",
@@ -56,25 +69,51 @@ SYMBOL_MAP = {
     "AVAXUSDT.P": "AVAX-USDT",
     "MATICUSDT.P": "MATIC-USDT",
     "DOTUSDT.P": "DOT-USDT",
+    "TRXUSDT.P": "TRX-USDT",
+    "LINKUSDT.P": "LINK-USDT",
+    "ARBUSDT.P": "ARB-USDT",
+    "PEPEUSDT.P": "PEPE-USDT",
+    "SHIBUSDT.P": "SHIB-USDT",
+    "FLOKIUSDT.P": "FLOKI-USDT",
+    "FTMUSDT.P": "FTM-USDT",
+    "NEARUSDT.P": "NEAR-USDT",
+    "ATOMUSDT.P": "ATOM-USDT",
+    "OPUSDT.P": "OP-USDT",
+    "APTUSDT.P": "APT-USDT",
+    "IMXUSDT.P": "IMX-USDT",
+    "LDOUSDT.P": "LDO-USDT",
+    "WLDUSDT.P": "WLD-USDT",
+    "INJUSDT.P": "INJ-USDT",
 }
 
-# ИСПРАВЛЕНО: Точность для расчёта количества
 QUANTITY_PRECISION = {
     "BTC-USDT": 3,
     "ETH-USDT": 2,
     "BNB-USDT": 2,
-    "SOL-USDT": 2,    # было 1
+    "SOL-USDT": 2,
     "XRP-USDT": 0,
     "ADA-USDT": 0,
     "DOGE-USDT": 0,
-    "AVAX-USDT": 2,   # было 1
+    "AVAX-USDT": 2,
     "MATIC-USDT": 0,
-    "DOT-USDT": 2,    # было 1
+    "DOT-USDT": 2,
     "TRX-USDT": 0,
-    "LINK-USDT": 2,   # было 1
+    "LINK-USDT": 2,
+    "ARB-USDT": 0,
+    "PEPE-USDT": 0,
+    "SHIB-USDT": 0,
+    "FLOKI-USDT": 0,
+    "FTM-USDT": 0,
+    "NEAR-USDT": 1,
+    "ATOM-USDT": 1,
+    "OP-USDT": 0,
+    "APT-USDT": 2,
+    "IMX-USDT": 0,
+    "LDO-USDT": 0,
+    "WLD-USDT": 0,
+    "INJ-USDT": 2,
 }
 
-# НОВОЕ: Минимальные объёмы BingX
 MIN_QUANTITY = {
     "BTC-USDT": 0.001,
     "ETH-USDT": 0.01,
@@ -88,11 +127,21 @@ MIN_QUANTITY = {
     "DOT-USDT": 0.1,
     "TRX-USDT": 1,
     "LINK-USDT": 0.1,
+    "ARB-USDT": 1,
+    "PEPE-USDT": 100000,
+    "SHIB-USDT": 100000,
+    "FLOKI-USDT": 10000,
+    "FTM-USDT": 1,
+    "NEAR-USDT": 1,
+    "ATOM-USDT": 1,
+    "OP-USDT": 1,
+    "APT-USDT": 0.1,
+    "IMX-USDT": 1,
+    "LDO-USDT": 1,
+    "WLD-USDT": 1,
+    "INJ-USDT": 0.1,
 }
 
-# ==========================
-#  ФУНКЦИИ BINGX
-# ==========================
 def create_signature(params: dict, secret_key: str) -> str:
     query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
     return hmac.new(
@@ -178,7 +227,6 @@ def set_leverage(symbol: str, leverage: int):
 
 
 def calculate_quantity(symbol: str, usdt_amount: float, current_price: float) -> float:
-    """ОБНОВЛЕНО: Расчёт с проверкой минимума"""
     if current_price <= 0:
         return 0.0
     
@@ -186,7 +234,6 @@ def calculate_quantity(symbol: str, usdt_amount: float, current_price: float) ->
     precision = QUANTITY_PRECISION.get(symbol, 2)
     quantity = round(raw_qty, precision)
     
-    # НОВОЕ: Проверка минимального объёма
     min_qty = MIN_QUANTITY.get(symbol, 0.01)
     if quantity < min_qty:
         print(f"⚠️ Количество {quantity} меньше минимума {min_qty} для {symbol}")
@@ -252,9 +299,6 @@ def set_stop_loss_take_profit(symbol: str, side: str, stop_loss: float, take_pro
     return sl_result, tp_result
 
 
-# ==========================
-#  TELEGRAM
-# ==========================
 def send_to_telegram(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
@@ -265,9 +309,6 @@ def send_to_telegram(text: str):
         print(f"Telegram error: {e}")
 
 
-# ==========================
-#  ROUTES
-# ==========================
 @app.route("/")
 def home():
     return "Bot is running!", 200
@@ -362,7 +403,7 @@ def webhook():
 📈 <b>Направление:</b> {direction}
 💰 <b>Цена:</b> {current_price}
 
-⚠️ Размер позиции 5 USDT слишком мал
+⚠️ Размер позиции {POSITION_SIZE_USDT} USDT слишком мал
 📏 Минимум: {min_qty}
 🔢 Рассчитано: {quantity}
 
