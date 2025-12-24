@@ -34,7 +34,6 @@ USE_MARKET_ORDER = True
 #  СООТВЕТСТВИЕ СИМВОЛОВ
 # ==========================
 SYMBOL_MAP = {
-    # Стандартные символы
     "BTCUSDT": "BTC-USDT",
     "ETHUSDT": "ETH-USDT",
     "BNBUSDT": "BNB-USDT",
@@ -47,7 +46,6 @@ SYMBOL_MAP = {
     "DOTUSDT": "DOT-USDT",
     "TRXUSDT": "TRX-USDT",
     "LINKUSDT": "LINK-USDT",
-    # С суффиксом .P (Perpetual)
     "BTCUSDT.P": "BTC-USDT",
     "ETHUSDT.P": "ETH-USDT",
     "BNBUSDT.P": "BNB-USDT",
@@ -60,27 +58,42 @@ SYMBOL_MAP = {
     "DOTUSDT.P": "DOT-USDT",
 }
 
-# Precision для разных символов
+# ИСПРАВЛЕНО: Точность для расчёта количества
 QUANTITY_PRECISION = {
     "BTC-USDT": 3,
     "ETH-USDT": 2,
     "BNB-USDT": 2,
-    "SOL-USDT": 1,
+    "SOL-USDT": 2,    # было 1
     "XRP-USDT": 0,
     "ADA-USDT": 0,
     "DOGE-USDT": 0,
-    "AVAX-USDT": 1,
+    "AVAX-USDT": 2,   # было 1
     "MATIC-USDT": 0,
-    "DOT-USDT": 1,
+    "DOT-USDT": 2,    # было 1
     "TRX-USDT": 0,
-    "LINK-USDT": 1,
+    "LINK-USDT": 2,   # было 1
+}
+
+# НОВОЕ: Минимальные объёмы BingX
+MIN_QUANTITY = {
+    "BTC-USDT": 0.001,
+    "ETH-USDT": 0.01,
+    "BNB-USDT": 0.01,
+    "SOL-USDT": 0.1,
+    "XRP-USDT": 1,
+    "ADA-USDT": 1,
+    "DOGE-USDT": 1,
+    "AVAX-USDT": 0.1,
+    "MATIC-USDT": 1,
+    "DOT-USDT": 0.1,
+    "TRX-USDT": 1,
+    "LINK-USDT": 0.1,
 }
 
 # ==========================
 #  ФУНКЦИИ BINGX
 # ==========================
 def create_signature(params: dict, secret_key: str) -> str:
-    """Создание подписи для BingX"""
     query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
     return hmac.new(
         secret_key.encode("utf-8"),
@@ -90,17 +103,14 @@ def create_signature(params: dict, secret_key: str) -> str:
 
 
 def bingx_request(method: str, endpoint: str, params: dict | None = None) -> dict:
-    """Универсальный запрос к BingX"""
     if params is None:
         params = {}
 
-    # timestamp обязателен
     params["timestamp"] = int(time.time() * 1000)
     
     if method == "POST":
         params["recvWindow"] = 5000
     
-    # подпись
     signature = create_signature(params, BINGX_SECRET_KEY)
     params["signature"] = signature
 
@@ -133,13 +143,11 @@ def get_account_balance():
 
 
 def get_open_positions():
-    """Получить открытые позиции"""
     endpoint = "/openApi/swap/v2/user/positions"
     return bingx_request("GET", endpoint)
 
 
 def has_open_position(symbol: str, side: str) -> bool:
-    """Проверить, есть ли уже открытая позиция"""
     positions = get_open_positions()
     
     if positions.get("code") != 0:
@@ -151,10 +159,8 @@ def has_open_position(symbol: str, side: str) -> bool:
         if pos.get("symbol") == symbol:
             position_amt = float(pos.get("positionAmt", 0))
             
-            # Если LONG и позиция положительная
             if side == "BUY" and position_amt > 0:
                 return True
-            # Если SHORT и позиция отрицательная
             if side == "SELL" and position_amt < 0:
                 return True
     
@@ -172,14 +178,21 @@ def set_leverage(symbol: str, leverage: int):
 
 
 def calculate_quantity(symbol: str, usdt_amount: float, current_price: float) -> float:
-    """Рассчитать количество с правильной точностью"""
+    """ОБНОВЛЕНО: Расчёт с проверкой минимума"""
     if current_price <= 0:
         return 0.0
     
     raw_qty = usdt_amount / current_price
     precision = QUANTITY_PRECISION.get(symbol, 2)
+    quantity = round(raw_qty, precision)
     
-    return round(raw_qty, precision)
+    # НОВОЕ: Проверка минимального объёма
+    min_qty = MIN_QUANTITY.get(symbol, 0.01)
+    if quantity < min_qty:
+        print(f"⚠️ Количество {quantity} меньше минимума {min_qty} для {symbol}")
+        return 0.0
+    
+    return quantity
 
 
 def get_current_price(symbol: str) -> float | None:
@@ -214,10 +227,8 @@ def place_order(symbol: str, side: str, quantity: float, price: float | None = N
 
 
 def set_stop_loss_take_profit(symbol: str, side: str, stop_loss: float, take_profit: float):
-    """Установка SL и TP"""
     endpoint = "/openApi/swap/v2/trade/order"
 
-    # Stop Loss
     sl_params = {
         "symbol": symbol,
         "side": "SELL" if side == "BUY" else "BUY",
@@ -227,7 +238,6 @@ def set_stop_loss_take_profit(symbol: str, side: str, stop_loss: float, take_pro
         "closePosition": "true",
     }
 
-    # Take Profit
     tp_params = {
         "symbol": symbol,
         "side": "SELL" if side == "BUY" else "BUY",
@@ -265,7 +275,6 @@ def home():
 
 @app.route("/test", methods=["GET"])
 def test():
-    """Тестовый endpoint"""
     balance = get_account_balance()
     positions = get_open_positions()
     
@@ -290,13 +299,11 @@ def webhook():
 
         data = request.get_json()
 
-        # Парсим данные
         signal = data.get("signal", "N/A")
         direction = data.get("direction", "N/A")
         symbol_tv = data.get("symbol", "N/A")
         tf = data.get("tf", "N/A")
 
-        # Безопасный парсинг цены
         try:
             price = float(data.get("price", 0) or 0)
         except (ValueError, TypeError):
@@ -306,29 +313,20 @@ def webhook():
         tp2 = data.get("tp2", "na")
         sl = data.get("sl", "na")
 
-        # Конвертация символа
         symbol_bingx = SYMBOL_MAP.get(symbol_tv, symbol_tv)
 
-        # Логирование
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with open("signals.log", "a", encoding="utf-8") as f:
             f.write(f"[{timestamp}] {signal} {symbol_tv} → {symbol_bingx} @ {price} | {direction}\n")
 
         print(f"📊 Signal received: {signal} {symbol_bingx} {direction}")
 
-        # ==========================
-        #  ТОРГОВЛЯ
-        # ==========================
         if ENABLE_TRADING and BINGX_API_KEY != "YOUR_BINGX_API_KEY":
             print(f"🤖 Auto-trading: {signal} {symbol_bingx}")
 
-            # Определяем сторону
             side = "BUY" if direction == "LONG" else "SELL"
 
-            # ПРОВЕРКА ДУБЛЕЙ
             if has_open_position(symbol_bingx, side):
-                status = "⚠️ ПРОПУЩЕН: Позиция уже открыта"
-                order_id = "N/A"
                 message = f"""⚠️ <b>ДУБЛЬ ПОЗИЦИИ</b>
 
 📊 <b>Сигнал:</b> {signal}
@@ -342,30 +340,42 @@ def webhook():
                 send_to_telegram(message)
                 return "Position already exists", 200
 
-            # 1. Установить плечо
             lev_result = set_leverage(symbol_bingx, LEVERAGE)
             print(f"Leverage set: {lev_result}")
 
-            # 2. Получить цену
             current_price = get_current_price(symbol_bingx)
             if not current_price or current_price <= 0:
                 current_price = price
             
             print(f"Current price: {current_price}")
 
-            # 3. Рассчитать количество
             quantity = calculate_quantity(symbol_bingx, POSITION_SIZE_USDT, current_price)
             print(f"Quantity: {quantity}")
 
             if quantity <= 0:
-                status = "❌ ОШИБКА: Неверное количество"
-                order_id = "N/A"
+                min_qty = MIN_QUANTITY.get(symbol_bingx, 0.01)
+                
+                message = f"""❌ <b>ОШИБКА РАЗМЕРА</b>
+
+📊 <b>Сигнал:</b> {signal}
+💱 <b>Символ:</b> {symbol_bingx}
+📈 <b>Направление:</b> {direction}
+💰 <b>Цена:</b> {current_price}
+
+⚠️ Размер позиции 5 USDT слишком мал
+📏 Минимум: {min_qty}
+🔢 Рассчитано: {quantity}
+
+💡 Увеличь POSITION_SIZE_USDT до 10-15 USDT
+
+⏰ {timestamp}"""
+                
+                send_to_telegram(message)
+                return "Quantity too small", 400
             else:
-                # 4. Разместить ордер
                 order_result = place_order(symbol_bingx, side, quantity)
                 print(f"Order result: {order_result}")
 
-                # 5. Установить SL/TP
                 if sl != "na" and tp1 != "na":
                     try:
                         sl_price = float(sl)
@@ -375,7 +385,6 @@ def webhook():
                     except (ValueError, TypeError) as e:
                         print(f"SL/TP error: {e}")
 
-                # Проверка результата
                 if order_result.get("code") == 0:
                     status = "✅ ОРДЕР ОТКРЫТ"
                     order_data = order_result.get("data", {})
@@ -407,7 +416,6 @@ def webhook():
 ⏱️ <b>Таймфрейм:</b> {tf}m
 ⏰ {timestamp}"""
         else:
-            # Только уведомление
             reason = "DISABLED" if not ENABLE_TRADING else "API NOT CONFIGURED"
             message = f"""📊 <b>{signal}</b>
 
@@ -437,6 +445,7 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
