@@ -152,13 +152,12 @@ def create_signature(params: dict, secret_key: str) -> str:
 
 
 def bingx_request(method: str, endpoint: str, params: dict | None = None) -> dict:
+    """ИСПРАВЛЕНО: recvWindow увеличен с 5000 до 60000"""
     if params is None:
         params = {}
 
     params["timestamp"] = int(time.time() * 1000)
-    
-    if method == "POST":
-        params["recvWindow"] = 5000
+    params["recvWindow"] = 60000  # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: было 5000
     
     signature = create_signature(params, BINGX_SECRET_KEY)
     params["signature"] = signature
@@ -327,7 +326,8 @@ def test():
             "trading_enabled": ENABLE_TRADING,
             "position_size": POSITION_SIZE_USDT,
             "leverage": LEVERAGE,
-            "api_configured": BINGX_API_KEY != "YOUR_BINGX_API_KEY"
+            "api_configured": BINGX_API_KEY != "YOUR_BINGX_API_KEY",
+            "recv_window": 60000
         },
     }
 
