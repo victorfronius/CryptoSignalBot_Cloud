@@ -10,15 +10,15 @@ app = Flask(__name__)
 # ==========================
 # BINGX API
 # ==========================
-BINGX_API_KEY = os.getenv("tfi2cWlGNK9eSpDJlxNks2w7DBiT6lTlUiXLjkBQhe7sIgVv7HKWiByVhDSagmrZBSgb8Hoaog1N4HzYffQ")
-BINGX_SECRET_KEY = os.getenv("SnNoEvoc1ZBhwHYMzi1KfAIvvgnI8eWs6b4fyjo9i7u0pcsHijJ7YIEngeHUVD19YxLeyrp2yE9UPjYAqM65w")
+BINGX_API_KEY = os.getenv("BINGX_API_KEY")
+BINGX_SECRET_KEY = os.getenv("BINGX_SECRET_KEY")
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
 # ==========================
 # TELEGRAM SETTINGS
 # ==========================
-TELEGRAM_BOT_TOKEN = os.getenv("8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4")
-TELEGRAM_CHAT_ID = os.getenv("5411759224")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # ==========================
 # НАСТРОЙКИ
@@ -377,6 +377,7 @@ def test():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
+
 
 
 
