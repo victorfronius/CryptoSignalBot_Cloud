@@ -1,492 +1,382 @@
-from flask import Flask, request
+from flask import Flask, request, jsonify, render_template_string
 import requests
 import hmac
 import hashlib
 import time
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 
 # ==========================
-#  TELEGRAM
+# BINGX API
 # ==========================
-BOT_TOKEN = os.getenv("BOT_TOKEN", "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4")
-CHAT_ID = os.getenv("CHAT_ID", "5411759224")
-
-# ==========================
-#  BINGX API
-# ==========================
-BINGX_API_KEY = os.getenv("BINGX_API_KEY", "tfi2cWlGNK9eSpDJlxNks2w7DBiT6lTlUiXLjkBQhe7sIgVv7HKWiByVhDSagmrZBSgb8Hoaog1N4HzYffQ")
-BINGX_SECRET_KEY = os.getenv("BINGX_SECRET_KEY", "SnNoEvoc1ZBhwHYMzi1KfAIvvgnI8eWs6b4fyjo9i7u0pcsHijJ7YIEngeHUVD19YxLeyrp2yE9UPjYAqM65w")
-
+BINGX_API_KEY = os.getenv("tfi2cWlGNK9eSpDJlxNks2w7DBiT6lTlUiXLjkBQhe7sIgVv7HKWiByVhDSagmrZBSgb8Hoaog1N4HzYffQ")
+BINGX_SECRET_KEY = os.getenv("SnNoEvoc1ZBhwHYMzi1KfAIvvgnI8eWs6b4fyjo9i7u0pcsHijJ7YIEngeHUVD19YxLeyrp2yE9UPjYAqM65w")
 BINGX_BASE_URL = "https://open-api.bingx.com"
 
 # ==========================
-#  НАСТРОЙКИ ТОРГОВЛИ
+# TELEGRAM SETTINGS
 # ==========================
-ENABLE_TRADING = True
+TELEGRAM_BOT_TOKEN = os.getenv("8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4")
+TELEGRAM_CHAT_ID = os.getenv("5411759224")
+
+# ==========================
+# НАСТРОЙКИ
+# ==========================
 POSITION_SIZE_USDT = 5
 LEVERAGE = 10
-USE_MARKET_ORDER = True
+RECV_WINDOW = 60000
+ALLOWED_TIMEFRAMES = [15]
 
 # ==========================
-#  СООТВЕТСТВИЕ СИМВОЛОВ - 25 ПАР
+# СИМВОЛЫ
 # ==========================
 SYMBOL_MAP = {
-    "BTCUSDT": "BTC-USDT",
-    "ETHUSDT": "ETH-USDT",
-    "BNBUSDT": "BNB-USDT",
-    "SOLUSDT": "SOL-USDT",
-    "XRPUSDT": "XRP-USDT",
-    "ADAUSDT": "ADA-USDT",
-    "DOGEUSDT": "DOGE-USDT",
-    "AVAXUSDT": "AVAX-USDT",
-    "MATICUSDT": "MATIC-USDT",
-    "DOTUSDT": "DOT-USDT",
-    "TRXUSDT": "TRX-USDT",
-    "LINKUSDT": "LINK-USDT",
-    "ARBUSDT": "ARB-USDT",
-    "PEPEUSDT": "PEPE-USDT",
-    "SHIBUSDT": "SHIB-USDT",
-    "FLOKIUSDT": "FLOKI-USDT",
-    "FTMUSDT": "FTM-USDT",
-    "NEARUSDT": "NEAR-USDT",
-    "ATOMUSDT": "ATOM-USDT",
-    "OPUSDT": "OP-USDT",
-    "APTUSDT": "APT-USDT",
-    "IMXUSDT": "IMX-USDT",
-    "LDOUSDT": "LDO-USDT",
-    "WLDUSDT": "WLD-USDT",
-    "INJUSDT": "INJ-USDT",
-    "BTCUSDT.P": "BTC-USDT",
-    "ETHUSDT.P": "ETH-USDT",
-    "BNBUSDT.P": "BNB-USDT",
-    "SOLUSDT.P": "SOL-USDT",
-    "XRPUSDT.P": "XRP-USDT",
-    "ADAUSDT.P": "ADA-USDT",
-    "DOGEUSDT.P": "DOGE-USDT",
-    "AVAXUSDT.P": "AVAX-USDT",
-    "MATICUSDT.P": "MATIC-USDT",
-    "DOTUSDT.P": "DOT-USDT",
-    "TRXUSDT.P": "TRX-USDT",
-    "LINKUSDT.P": "LINK-USDT",
-    "ARBUSDT.P": "ARB-USDT",
-    "PEPEUSDT.P": "PEPE-USDT",
-    "SHIBUSDT.P": "SHIB-USDT",
-    "FLOKIUSDT.P": "FLOKI-USDT",
-    "FTMUSDT.P": "FTM-USDT",
-    "NEARUSDT.P": "NEAR-USDT",
-    "ATOMUSDT.P": "ATOM-USDT",
-    "OPUSDT.P": "OP-USDT",
-    "APTUSDT.P": "APT-USDT",
-    "IMXUSDT.P": "IMX-USDT",
-    "LDOUSDT.P": "LDO-USDT",
-    "WLDUSDT.P": "WLD-USDT",
-    "INJUSDT.P": "INJ-USDT",
-}
-
-QUANTITY_PRECISION = {
-    "BTC-USDT": 3,
-    "ETH-USDT": 2,
-    "BNB-USDT": 2,
-    "SOL-USDT": 2,
-    "XRP-USDT": 0,
-    "ADA-USDT": 0,
-    "DOGE-USDT": 0,
-    "AVAX-USDT": 2,
-    "MATIC-USDT": 0,
-    "DOT-USDT": 2,
-    "TRX-USDT": 0,
-    "LINK-USDT": 2,
-    "ARB-USDT": 0,
-    "PEPE-USDT": 0,
-    "SHIB-USDT": 0,
-    "FLOKI-USDT": 0,
-    "FTM-USDT": 0,
-    "NEAR-USDT": 1,
-    "ATOM-USDT": 1,
-    "OP-USDT": 0,
-    "APT-USDT": 2,
-    "IMX-USDT": 0,
-    "LDO-USDT": 0,
-    "WLD-USDT": 0,
-    "INJ-USDT": 2,
+    "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT",
+    "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
+    "BNBUSDT": "BNB-USDT", "BNBUSDT.P": "BNB-USDT",
+    "SOLUSDT": "SOL-USDT", "SOLUSDT.P": "SOL-USDT",
+    "XRPUSDT": "XRP-USDT", "XRPUSDT.P": "XRP-USDT",
+    "ADAUSDT": "ADA-USDT", "ADAUSDT.P": "ADA-USDT",
+    "DOGEUSDT": "DOGE-USDT", "DOGEUSDT.P": "DOGE-USDT",
+    "AVAXUSDT": "AVAX-USDT", "AVAXUSDT.P": "AVAX-USDT",
+    "MATICUSDT": "MATIC-USDT", "MATICUSDT.P": "MATIC-USDT",
+    "DOTUSDT": "DOT-USDT", "DOTUSDT.P": "DOT-USDT",
+    "TRXUSDT": "TRX-USDT", "TRXUSDT.P": "TRX-USDT",
+    "LINKUSDT": "LINK-USDT", "LINKUSDT.P": "LINK-USDT",
+    "ARBUSDT": "ARB-USDT", "ARBUSDT.P": "ARB-USDT",
+    "PEPEUSDT": "PEPE-USDT", "PEPEUSDT.P": "PEPE-USDT",
+    "SHIBUSDT": "SHIB-USDT", "SHIBUSDT.P": "SHIB-USDT",
+    "FLOKIUSDT": "FLOKI-USDT", "FLOKIUSDT.P": "FLOKI-USDT",
+    "FTMUSDT": "FTM-USDT", "FTMUSDT.P": "FTM-USDT",
+    "NEARUSDT": "NEAR-USDT", "NEARUSDT.P": "NEAR-USDT",
+    "ATOMUSDT": "ATOM-USDT", "ATOMUSDT.P": "ATOM-USDT",
+    "OPUSDT": "OP-USDT", "OPUSDT.P": "OP-USDT",
+    "APTUSDT": "APT-USDT", "APTUSDT.P": "APT-USDT",
+    "IMXUSDT": "IMX-USDT", "IMXUSDT.P": "IMX-USDT",
+    "LDOUSDT": "LDO-USDT", "LDOUSDT.P": "LDO-USDT",
+    "WLDUSDT": "WLD-USDT", "WLDUSDT.P": "WLD-USDT",
+    "INJUSDT": "INJ-USDT", "INJUSDT.P": "INJ-USDT",
+    "SUIUSDT": "SUI-USDT", "SUIUSDT.P": "SUI-USDT",
 }
 
 MIN_QUANTITY = {
-    "BTC-USDT": 0.001,
-    "ETH-USDT": 0.01,
-    "BNB-USDT": 0.01,
-    "SOL-USDT": 0.1,
-    "XRP-USDT": 1,
-    "ADA-USDT": 1,
-    "DOGE-USDT": 1,
-    "AVAX-USDT": 0.1,
-    "MATIC-USDT": 1,
-    "DOT-USDT": 0.1,
-    "TRX-USDT": 1,
-    "LINK-USDT": 0.1,
-    "ARB-USDT": 1,
-    "PEPE-USDT": 100000,
-    "SHIB-USDT": 100000,
-    "FLOKI-USDT": 10000,
-    "FTM-USDT": 1,
-    "NEAR-USDT": 1,
-    "ATOM-USDT": 1,
-    "OP-USDT": 1,
-    "APT-USDT": 0.1,
-    "IMX-USDT": 1,
-    "LDO-USDT": 1,
-    "WLD-USDT": 1,
-    "INJ-USDT": 0.1,
+    "BTC-USDT": 0.001, "ETH-USDT": 0.01, "BNB-USDT": 0.01,
+    "SOL-USDT": 0.1, "XRP-USDT": 1, "ADA-USDT": 1,
+    "DOGE-USDT": 1, "AVAX-USDT": 0.1, "MATIC-USDT": 1,
+    "DOT-USDT": 0.1, "TRX-USDT": 1, "LINK-USDT": 0.1,
+    "ARB-USDT": 1, "PEPE-USDT": 100000, "SHIB-USDT": 100000,
+    "FLOKI-USDT": 10000, "FTM-USDT": 1, "NEAR-USDT": 1,
+    "ATOM-USDT": 1, "OP-USDT": 1, "APT-USDT": 0.1,
+    "IMX-USDT": 1, "LDO-USDT": 1, "WLD-USDT": 1,
+    "INJ-USDT": 0.1, "SUI-USDT": 1,
 }
 
-def create_signature(params: dict, secret_key: str) -> str:
-    query_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
-    return hmac.new(
-        secret_key.encode("utf-8"),
-        query_string.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
+QUANTITY_PRECISION = {
+    "BTC-USDT": 3, "ETH-USDT": 2, "BNB-USDT": 2,
+    "SOL-USDT": 2, "XRP-USDT": 0, "ADA-USDT": 0,
+    "DOGE-USDT": 0, "AVAX-USDT": 2, "MATIC-USDT": 0,
+    "DOT-USDT": 2, "TRX-USDT": 0, "LINK-USDT": 2,
+    "ARB-USDT": 0, "PEPE-USDT": 0, "SHIB-USDT": 0,
+    "FLOKI-USDT": 0, "FTM-USDT": 0, "NEAR-USDT": 1,
+    "ATOM-USDT": 1, "OP-USDT": 0, "APT-USDT": 2,
+    "IMX-USDT": 0, "LDO-USDT": 0, "WLD-USDT": 0,
+    "INJ-USDT": 2, "SUI-USDT": 0,
+}
 
+# ==========================
+# TELEGRAM NOTIFY
+# ==========================
+def send_telegram(message: str):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram отключен")
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML"
+    }
+    try:
+        requests.post(url, data=payload, timeout=10)
+    except Exception as e:
+        print(f"Ошибка Telegram: {e}")
 
-def bingx_request(method: str, endpoint: str, params: dict | None = None) -> dict:
-    """ИСПРАВЛЕНО: recvWindow увеличен с 5000 до 60000"""
+# ==========================
+# ПОДПИСЬ И API
+# ==========================
+def sign(params: dict) -> str:
+    qs = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+    return hmac.new(BINGX_SECRET_KEY.encode(), qs.encode(), hashlib.sha256).hexdigest()
+
+def bingx(method, endpoint, params=None):
     if params is None:
         params = {}
-
     params["timestamp"] = int(time.time() * 1000)
-    params["recvWindow"] = 60000  # КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: было 5000
-    
-    signature = create_signature(params, BINGX_SECRET_KEY)
-    params["signature"] = signature
+    params["recvWindow"] = RECV_WINDOW
+    params["signature"] = sign(params)
 
-    headers = {
-        "X-BX-APIKEY": BINGX_API_KEY,
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-
-    url = f"{BINGX_BASE_URL}{endpoint}"
+    headers = {"X-BX-APIKEY": BINGX_API_KEY}
+    url = BINGX_BASE_URL + endpoint
 
     try:
         if method == "GET":
             r = requests.get(url, params=params, headers=headers, timeout=10)
-        elif method == "POST":
-            r = requests.post(url, params=params, headers=headers, timeout=10)
         else:
-            r = requests.request(method, url, params=params, headers=headers, timeout=10)
-
-        response = r.json()
-        print(f"BingX response: {response}")
-        return response
+            r = requests.post(url, params=params, headers=headers, timeout=10)
+        return r.json()
     except Exception as e:
         print(f"BingX error: {e}")
         return {"code": -1, "msg": str(e)}
 
-
-def get_account_balance():
-    endpoint = "/openApi/swap/v2/user/balance"
-    return bingx_request("GET", endpoint)
-
-
-def get_open_positions():
-    endpoint = "/openApi/swap/v2/user/positions"
-    return bingx_request("GET", endpoint)
-
-
-def has_open_position(symbol: str, side: str) -> bool:
-    positions = get_open_positions()
-    
-    if positions.get("code") != 0:
-        return False
-    
-    data = positions.get("data", [])
-    
-    for pos in data:
-        if pos.get("symbol") == symbol:
-            position_amt = float(pos.get("positionAmt", 0))
-            
-            if side == "BUY" and position_amt > 0:
-                return True
-            if side == "SELL" and position_amt < 0:
-                return True
-    
-    return False
-
-
-def set_leverage(symbol: str, leverage: int):
-    endpoint = "/openApi/swap/v2/trade/leverage"
-    params = {
-        "symbol": symbol,
-        "side": "BOTH",
-        "leverage": leverage,
-    }
-    return bingx_request("POST", endpoint, params)
-
-
-def calculate_quantity(symbol: str, usdt_amount: float, current_price: float) -> float:
-    if current_price <= 0:
-        return 0.0
-    
-    raw_qty = usdt_amount / current_price
-    precision = QUANTITY_PRECISION.get(symbol, 2)
-    quantity = round(raw_qty, precision)
-    
-    min_qty = MIN_QUANTITY.get(symbol, 0.01)
-    if quantity < min_qty:
-        print(f"⚠️ Количество {quantity} меньше минимума {min_qty} для {symbol}")
-        return 0.0
-    
-    return quantity
-
-
-def get_current_price(symbol: str) -> float | None:
-    endpoint = "/openApi/swap/v2/quote/price"
-    params = {"symbol": symbol}
-    result = bingx_request("GET", endpoint, params)
-
-    try:
-        if result.get("code") == 0:
-            return float(result["data"]["price"])
-    except Exception as e:
-        print(f"price parse error: {e}")
-
+# ==========================
+# API ФУНКЦИИ
+# ==========================
+def get_price(symbol):
+    r = bingx("GET", "/openApi/swap/v2/quote/price", {"symbol": symbol})
+    if r.get("code") == 0:
+        return float(r["data"]["price"])
     return None
 
+def set_leverage(symbol):
+    return bingx("POST", "/openApi/swap/v2/trade/leverage", {
+        "symbol": symbol,
+        "side": "BOTH",
+        "leverage": LEVERAGE
+    })
 
-def place_order(symbol: str, side: str, quantity: float, price: float | None = None):
-    endpoint = "/openApi/swap/v2/trade/order"
+def get_positions():
+    return bingx("GET", "/openApi/swap/v2/user/positions", {})
 
-    params = {
+def has_position(symbol, side):
+    r = get_positions()
+    if r.get("code") != 0:
+        return False
+    for p in r.get("data", []):
+        if p["symbol"] == symbol:
+            amt = float(p["positionAmt"])
+            if side == "BUY" and amt > 0:
+                return True
+            if side == "SELL" and amt < 0:
+                return True
+    return False
+
+def calculate_quantity(symbol, usdt_amount, price):
+    """Рассчитывает количество с учётом минимума и точности"""
+    if price <= 0:
+        return 0
+    
+    raw_qty = usdt_amount / price
+    precision = QUANTITY_PRECISION.get(symbol, 2)
+    qty = round(raw_qty, precision)
+    
+    min_qty = MIN_QUANTITY.get(symbol, 0.01)
+    if qty < min_qty:
+        print(f"⚠️ Qty {qty} < min {min_qty} для {symbol}")
+        return 0
+    
+    return qty
+
+def place_order(symbol, side, qty):
+    return bingx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": symbol,
         "side": side,
         "positionSide": "LONG" if side == "BUY" else "SHORT",
-        "type": "MARKET" if USE_MARKET_ORDER else "LIMIT",
-        "quantity": str(quantity),
-    }
+        "type": "MARKET",
+        "quantity": str(qty)
+    })
 
-    if not USE_MARKET_ORDER and price is not None:
-        params["price"] = str(price)
+def place_sl_tp(symbol, side, sl, tp):
+    close_side = "SELL" if side == "BUY" else "BUY"
+    pos_side = "LONG" if side == "BUY" else "SHORT"
 
-    return bingx_request("POST", endpoint, params)
-
-
-def set_stop_loss_take_profit(symbol: str, side: str, stop_loss: float, take_profit: float):
-    endpoint = "/openApi/swap/v2/trade/order"
-
-    sl_params = {
+    bingx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": symbol,
-        "side": "SELL" if side == "BUY" else "BUY",
-        "positionSide": "LONG" if side == "BUY" else "SHORT",
+        "side": close_side,
+        "positionSide": pos_side,
         "type": "STOP_MARKET",
-        "stopPrice": str(stop_loss),
-        "closePosition": "true",
-    }
+        "stopPrice": str(sl),
+        "closePosition": "true"
+    })
 
-    tp_params = {
+    bingx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": symbol,
-        "side": "SELL" if side == "BUY" else "BUY",
-        "positionSide": "LONG" if side == "BUY" else "SHORT",
+        "side": close_side,
+        "positionSide": pos_side,
         "type": "TAKE_PROFIT_MARKET",
-        "stopPrice": str(take_profit),
-        "closePosition": "true",
-    }
+        "stopPrice": str(tp),
+        "closePosition": "true"
+    })
 
-    sl_result = bingx_request("POST", endpoint, sl_params)
-    tp_result = bingx_request("POST", endpoint, tp_params)
-    return sl_result, tp_result
-
-
-def send_to_telegram(text: str):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
-    try:
-        r = requests.post(url, json=payload, timeout=5)
-        print(f"Telegram response: {r.status_code}")
-    except Exception as e:
-        print(f"Telegram error: {e}")
-
+# ==========================
+# ГЛАВНАЯ СТРАНИЦА В БРАУЗЕРЕ
+# ==========================
+HTML_PAGE = """
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BingX Trading Bot</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #121212; color: #e0e0e0; text-align: center; padding: 50px; }
+        .container { max-width: 600px; margin: 0 auto; background: #1e1e1e; padding: 30px; border-radius: 15px; box-shadow: 0 0 20px rgba(0,255,0,0.2); }
+        h1 { color: #00ff00; }
+        .status { font-size: 1.2em; margin: 20px 0; }
+        .ok { color: #00ff00; }
+        .warn { color: #ffff00; }
+        .error { color: #ff0000; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 BingX Trading Bot</h1>
+        <p>Бот работает и готов принимать сигналы от TradingView</p>
+        
+        <div class="status">
+            Webhook: <span class="ok">/webhook</span><br><br>
+            Размер позиции: <strong>{{ position_size }} USDT</strong> × {{ leverage }}x<br>
+            Разрешённые ТФ: <strong>{{ allowed_tf }}</strong> минут<br><br>
+            Telegram уведомления: <span class="{{ tg_status }}">{{ tg_text }}</span>
+        </div>
+        
+        <hr style="border-color: #333;">
+        <small>© 2025 • Работает на Flask</small>
+    </div>
+</body>
+</html>
+"""
 
 @app.route("/")
-def home():
-    return "Bot is running!", 200
+def index():
+    tg_ok = TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID
+    return render_template_string(HTML_PAGE, 
+        position_size=POSITION_SIZE_USDT,
+        leverage=LEVERAGE,
+        allowed_tf=", ".join(map(str, ALLOWED_TIMEFRAMES)),
+        tg_status="ok" if tg_ok else "warn",
+        tg_text="Включены ✅" if tg_ok else "Не настроены ⚠️"
+    )
 
-
-@app.route("/test", methods=["GET"])
-def test():
-    balance = get_account_balance()
-    positions = get_open_positions()
-    
-    return {
-        "status": "OK",
-        "balance": balance,
-        "positions": positions,
-        "settings": {
-            "trading_enabled": ENABLE_TRADING,
-            "position_size": POSITION_SIZE_USDT,
-            "leverage": LEVERAGE,
-            "api_configured": BINGX_API_KEY != "YOUR_BINGX_API_KEY",
-            "recv_window": 60000
-        },
-    }
-
-
+# ==========================
+# WEBHOOK - ИСПРАВЛЕНО
+# ==========================
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    try:
-        if not request.is_json:
-            return "Invalid data", 400
+    d = request.json
+    if not d:
+        return jsonify({"error": "no json"}), 400
 
-        data = request.get_json()
+    # ИСПРАВЛЕНО: tf вместо timeframe
+    tf = int(d.get("tf", 0))
+    tv_symbol = d.get("symbol", "UNKNOWN")
+    direction = d.get("direction", "").upper()
+    signal = d.get("signal", "N/A")
 
-        signal = data.get("signal", "N/A")
-        direction = data.get("direction", "N/A")
-        symbol_tv = data.get("symbol", "N/A")
-        tf = data.get("tf", "N/A")
+    base_msg = (
+        f"🚨 Новый сигнал\n"
+        f"Сигнал: {signal}\n"
+        f"Символ: {tv_symbol}\n"
+        f"Направление: {direction}\n"
+        f"Таймфрейм: {tf}m\n"
+    )
 
+    if tf not in ALLOWED_TIMEFRAMES:
+        send_telegram(base_msg + "❌ Игнорируем: запрещённый ТФ")
+        return jsonify({"status": "ignored_tf"})
+
+    if tv_symbol not in SYMBOL_MAP:
+        send_telegram(base_msg + "❌ Игнорируем: символ не поддерживается")
+        return jsonify({"error": "symbol not supported"}), 400
+
+    symbol = SYMBOL_MAP[tv_symbol]
+    side = "BUY" if direction == "LONG" else "SELL"
+    
+    # ИСПРАВЛЕНО: проверка sl/tp на "na"
+    sl_raw = d.get("sl", "na")
+    tp_raw = d.get("tp", "na")
+    
+    if sl_raw == "na" or tp_raw == "na":
+        send_telegram(base_msg + "⚠️ SL/TP не указаны, позиция без стопов")
+        sl = None
+        tp = None
+    else:
         try:
-            price = float(data.get("price", 0) or 0)
+            sl = float(sl_raw)
+            tp = float(tp_raw)
         except (ValueError, TypeError):
-            price = 0.0
+            send_telegram(base_msg + "❌ Некорректные SL/TP")
+            return jsonify({"error": "invalid sl/tp"}), 400
 
-        tp1 = data.get("tp1", "na")
-        tp2 = data.get("tp2", "na")
-        sl = data.get("sl", "na")
+    if has_position(symbol, side):
+        send_telegram(base_msg + f"⚠️ Позиция уже открыта ({'LONG' if side == 'BUY' else 'SHORT'})\nПропуск")
+        return jsonify({"status": "position_exists"})
 
-        symbol_bingx = SYMBOL_MAP.get(symbol_tv, symbol_tv)
+    price = get_price(symbol)
+    if not price:
+        send_telegram(base_msg + "❌ Не удалось получить цену")
+        return jsonify({"error": "price fetch failed"}), 500
 
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with open("signals.log", "a", encoding="utf-8") as f:
-            f.write(f"[{timestamp}] {signal} {symbol_tv} → {symbol_bingx} @ {price} | {direction}\n")
+    # ИСПРАВЛЕНО: правильный расчёт количества БЕЗ умножения на LEVERAGE
+    qty = calculate_quantity(symbol, POSITION_SIZE_USDT, price)
+    
+    if qty <= 0:
+        min_qty = MIN_QUANTITY.get(symbol, 0.01)
+        send_telegram(
+            base_msg +
+            f"❌ Размер позиции {POSITION_SIZE_USDT} USDT слишком мал\n"
+            f"Минимум: {min_qty}\n"
+            f"Рассчитано: {qty}"
+        )
+        return jsonify({"error": "quantity too small"}), 400
 
-        print(f"📊 Signal received: {signal} {symbol_bingx} {direction}")
+    send_telegram(
+        base_msg +
+        f"💼 Открываем позицию\n"
+        f"Символ: {symbol}\n"
+        f"Сторона: {'LONG 🟢' if side == 'BUY' else 'SHORT 🔴'}\n"
+        f"Плечо: {LEVERAGE}x\n"
+        f"Размер: {POSITION_SIZE_USDT} USDT\n"
+        f"Количество: {qty} контрактов\n"
+        f"Цена: {price}\n" +
+        (f"SL: {sl} | TP: {tp}" if sl and tp else "SL/TP: не установлены")
+    )
 
-        if ENABLE_TRADING and BINGX_API_KEY != "YOUR_BINGX_API_KEY":
-            print(f"🤖 Auto-trading: {signal} {symbol_bingx}")
+    set_leverage(symbol)
+    order = place_order(symbol, side, qty)
 
-            side = "BUY" if direction == "LONG" else "SELL"
-
-            if has_open_position(symbol_bingx, side):
-                message = f"""⚠️ <b>ДУБЛЬ ПОЗИЦИИ</b>
-
-📊 <b>Сигнал:</b> {signal}
-💱 <b>Символ:</b> {symbol_bingx}
-📈 <b>Направление:</b> {direction}
-
-❌ Позиция уже открыта, сигнал пропущен
-
-⏰ {timestamp}"""
-                
-                send_to_telegram(message)
-                return "Position already exists", 200
-
-            lev_result = set_leverage(symbol_bingx, LEVERAGE)
-            print(f"Leverage set: {lev_result}")
-
-            current_price = get_current_price(symbol_bingx)
-            if not current_price or current_price <= 0:
-                current_price = price
-            
-            print(f"Current price: {current_price}")
-
-            quantity = calculate_quantity(symbol_bingx, POSITION_SIZE_USDT, current_price)
-            print(f"Quantity: {quantity}")
-
-            if quantity <= 0:
-                min_qty = MIN_QUANTITY.get(symbol_bingx, 0.01)
-                
-                message = f"""❌ <b>ОШИБКА РАЗМЕРА</b>
-
-📊 <b>Сигнал:</b> {signal}
-💱 <b>Символ:</b> {symbol_bingx}
-📈 <b>Направление:</b> {direction}
-💰 <b>Цена:</b> {current_price}
-
-⚠️ Размер позиции {POSITION_SIZE_USDT} USDT слишком мал
-📏 Минимум: {min_qty}
-🔢 Рассчитано: {quantity}
-
-💡 Увеличь POSITION_SIZE_USDT до 10-15 USDT
-
-⏰ {timestamp}"""
-                
-                send_to_telegram(message)
-                return "Quantity too small", 400
-            else:
-                order_result = place_order(symbol_bingx, side, quantity)
-                print(f"Order result: {order_result}")
-
-                if sl != "na" and tp1 != "na":
-                    try:
-                        sl_price = float(sl)
-                        tp_price = float(tp1)
-                        sl_res, tp_res = set_stop_loss_take_profit(symbol_bingx, side, sl_price, tp_price)
-                        print(f"SL/TP set: SL={sl_res}, TP={tp_res}")
-                    except (ValueError, TypeError) as e:
-                        print(f"SL/TP error: {e}")
-
-                if order_result.get("code") == 0:
-                    status = "✅ ОРДЕР ОТКРЫТ"
-                    order_data = order_result.get("data", {})
-                    if isinstance(order_data, dict):
-                        order_id = order_data.get("order", {}).get("orderId", "N/A")
-                    else:
-                        order_id = str(order_data)
-                else:
-                    status = f"❌ ОШИБКА: {order_result.get('msg', 'Unknown')}"
-                    order_id = "N/A"
-
-            message = f"""🤖 <b>AUTO TRADE</b>
-{status}
-
-📊 <b>Сигнал:</b> {signal}
-💱 <b>Символ:</b> {symbol_bingx}
-📈 <b>Направление:</b> {direction}
-💰 <b>Цена входа:</b> {current_price}
-📦 <b>Размер:</b> {POSITION_SIZE_USDT} USDT (x{LEVERAGE})
-🔢 <b>Количество:</b> {quantity}
-
-🎯 <b>Take Profit:</b>
-  TP1: {tp1}
-  TP2: {tp2}
-
-🛑 <b>Stop Loss:</b> {sl}
-
-🆔 <b>Order ID:</b> {order_id}
-⏱️ <b>Таймфрейм:</b> {tf}m
-⏰ {timestamp}"""
+    if order.get("code") == 0:
+        if sl and tp:
+            place_sl_tp(symbol, side, sl, tp)
+            send_telegram(f"✅ Позиция {symbol} {side} успешно открыта!\nКоличество: {qty}\nSL/TP установлены")
         else:
-            reason = "DISABLED" if not ENABLE_TRADING else "API NOT CONFIGURED"
-            message = f"""📊 <b>{signal}</b>
+            send_telegram(f"✅ Позиция {symbol} {side} успешно открыта!\nКоличество: {qty}\n⚠️ Без SL/TP")
+        status = "success"
+    else:
+        error_msg = order.get("msg", "Unknown")
+        send_telegram(f"❌ ОШИБКА при открытии {symbol} {side}\n{error_msg}")
+        status = "error"
 
-💱 <b>Символ:</b> {symbol_tv}
-📈 <b>Направление:</b> {direction}
-💰 <b>Цена входа:</b> {price}
-⏱️ <b>Таймфрейм:</b> {tf}m
+    return jsonify({
+        "symbol": symbol,
+        "side": side,
+        "qty": qty,
+        "price": price,
+        "order": order,
+        "status": status
+    })
 
-🎯 <b>Take Profit:</b>
-  TP1: {tp1}
-  TP2: {tp2}
-
-🛑 <b>Stop Loss:</b> {sl}
-
-⏰ {timestamp}
-⚠️ Auto-trading: <b>{reason}</b>"""
-
-        send_to_telegram(message)
-        return "OK", 200
-
-    except Exception as e:
-        error_msg = f"❌ Ошибка: {str(e)}"
-        print(error_msg)
-        send_to_telegram(error_msg)
-        return "Error", 500
-
+# ==========================
+# TEST
+# ==========================
+@app.route("/test")
+def test():
+    result = bingx("GET", "/openApi/swap/v2/user/balance", {})
+    send_telegram(f"🧪 Тест баланса: {result.get('code')} {result.get('msg')}")
+    return jsonify(result)
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
-
+    app.run(host="0.0.0.0", port=5000, debug=False)
 
 
 
