@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 import requests
 import hmac
 import hashlib
@@ -76,12 +76,12 @@ def bx(m, e, p=None):
 
 @app.route("/")
 def home():
-    return "<h1>🚀 BingX Bot</h1><p>Работает</p><a href='/test'>Test</a>"
+    return "<h1>🚀 BingX Bot</h1><p>One-way mode</p><a href='/test'>Test</a>"
 
 @app.route("/test")
 def test():
     r = bx("GET", "/openApi/swap/v2/user/balance", {})
-    tg(f"🧪 {r.get('code')} {r.get('msg')}")
+    tg(f"🧪 {r.get('code')} {r.get('msg', 'OK')}")
     return jsonify(r)
 
 @app.route("/webhook", methods=["POST"])
@@ -94,36 +94,61 @@ def webhook():
     dir = d.get("direction", "").upper()
     sig = d.get("signal", "?")
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
+    
     if tf not in ALLOWED_TIMEFRAMES:
         tg(m + "❌ TF")
         return jsonify({"s": "tf"})
+    
     if sym not in SYMBOL_MAP:
         tg(m + "❌ SYM")
         return jsonify({"e": "sym"}), 400
+    
     s = SYMBOL_MAP[sym]
     si = "BUY" if dir == "LONG" else "SELL"
-    sl = d.get("sl", "na")
-    tp = d.get("tp", "na")
+    
+    # Проверка открытых позиций
+    pos = bx("GET", "/openApi/swap/v2/user/positions", {})
+    if pos.get("code") == 0:
+        for p in pos.get("data", []):
+            if p["symbol"] == s:
+                amt = float(p.get("positionAmt", 0))
+                if amt != 0:
+                    tg(m + f"⚠️ Позиция уже открыта: {amt}")
+                    return jsonify({"s": "exists"})
+    
     pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
     if pr.get("code") != 0:
-        tg(m + "❌ PR")
+        tg(m + "❌ Цена")
         return jsonify({"e": "pr"}), 500
+    
     p = float(pr["data"]["price"])
     q = round(POSITION_SIZE_USDT / p, QTY_PREC.get(s, 2))
+    
     if q < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Q: {q}")
         return jsonify({"e": "q"}), 400
+    
     tg(m + f"💼 {s} {q}")
+    
+    # Установка плеча
     bx("POST", "/openApi/swap/v2/trade/leverage", {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+    
+    # ONE-WAY MODE: используем BOTH вместо LONG/SHORT
     o = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s, "side": si, "positionSide": "LONG" if si == "BUY" else "SHORT",
-        "type": "MARKET", "quantity": str(q)
+        "symbol": s,
+        "side": si,
+        "positionSide": "BOTH",  # ← ИСПРАВЛЕНО для One-way mode!
+        "type": "MARKET",
+        "quantity": str(q)
     })
+    
     if o.get("code") == 0:
-        tg(f"✅ {s} {si}")
+        tg(f"✅ {s} {si} открыта!")
         return jsonify({"s": "ok"})
+    
     tg(f"❌ {o.get('msg')}")
-    return jsonify({"e": "ord"})
+    return jsonify({"e": "ord", "msg": o.get("msg")})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
