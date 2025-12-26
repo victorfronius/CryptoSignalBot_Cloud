@@ -12,16 +12,9 @@ BINGX_BASE_URL = "https://open-api.bingx.com"
 TELEGRAM_BOT_TOKEN = "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4"
 TELEGRAM_CHAT_ID = "5411759224"
 
-POSITION_SIZE_USDT = 5  # Для обычных монет
+POSITION_SIZE_USDT = 5  # Все монеты по 5 USDT
 LEVERAGE = 10
 ALLOWED_TIMEFRAMES = [15]
-
-# Мемкоины с увеличенным размером позиции
-MEME_COINS = {
-    "PEPE-USDT": 50,   # 50 USDT для PEPE
-    "SHIB-USDT": 50,   # 50 USDT для SHIB
-    "FLOKI-USDT": 50,  # 50 USDT для FLOKI
-}
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
@@ -83,7 +76,7 @@ def bx(m, e, p=None):
 
 @app.route("/")
 def home():
-    return "<h1>🚀 BingX Bot</h1><p>One-way mode + SL/TP</p><a href='/test'>Test</a>"
+    return "<h1>🚀 BingX Bot</h1><p>5 USDT × 10x для всех монет</p><a href='/test'>Test</a>"
 
 @app.route("/test")
 def test():
@@ -102,7 +95,7 @@ def webhook():
     dir = d.get("direction", "").upper()
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
-    tp_raw = d.get("tp1", d.get("tp", "na"))  # Сначала пробуем tp1, потом tp
+    tp_raw = d.get("tp1", d.get("tp", "na"))
     
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
     
@@ -117,9 +110,8 @@ def webhook():
     s = SYMBOL_MAP[sym]
     si = "BUY" if dir == "LONG" else "SELL"
     
-    # Проверка SL/TP
     if sl_raw == "na" or tp_raw == "na":
-        tg(m + "⚠️ Нет SL/TP - пропускаем")
+        tg(m + "⚠️ Нет SL/TP")
         return jsonify({"s": "no_sltp"})
     
     try:
@@ -129,17 +121,15 @@ def webhook():
         tg(m + "❌ Некорректные SL/TP")
         return jsonify({"e": "invalid_sltp"}), 400
     
-    # Проверка открытых позиций
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
     if pos.get("code") == 0:
         for p in pos.get("data", []):
             if p["symbol"] == s:
                 amt = float(p.get("positionAmt", 0))
                 if amt != 0:
-                    tg(m + f"⚠️ Позиция уже есть: {amt}")
+                    tg(m + f"⚠️ Позиция: {amt}")
                     return jsonify({"s": "exists"})
     
-    # Получение цены
     pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
     if pr.get("code") != 0:
         tg(m + "❌ Цена")
@@ -147,22 +137,17 @@ def webhook():
     
     price = float(pr["data"]["price"])
     
-    # Размер позиции (увеличенный для мемкоинов)
-    pos_size = MEME_COINS.get(s, POSITION_SIZE_USDT)
-    
-    # Расчёт с учётом плеча: (размер * плечо) / цена
-    qty = round((pos_size * LEVERAGE) / price, QTY_PREC.get(s, 2))
+    # Расчёт с учётом плеча
+    qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
     
     if qty < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Q: {qty}")
         return jsonify({"e": "q"}), 400
     
-    tg(m + f"💼 {s} {qty} ({pos_size} USDT)\nSL: {sl} | TP: {tp}")
+    tg(m + f"💼 {s} {qty} ({POSITION_SIZE_USDT} USDT)\nSL: {sl} | TP: {tp}")
     
-    # Установка плеча
     bx("POST", "/openApi/swap/v2/trade/leverage", {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
     
-    # Открытие позиции
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": si,
@@ -172,10 +157,9 @@ def webhook():
     })
     
     if o.get("code") != 0:
-        tg(f"❌ Ошибка открытия: {o.get('msg')}")
+        tg(f"❌ {o.get('msg')}")
         return jsonify({"e": "ord", "msg": o.get("msg")})
     
-    # Установка Stop Loss
     close_side = "SELL" if si == "BUY" else "BUY"
     
     sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
@@ -187,7 +171,6 @@ def webhook():
         "closePosition": "true"
     })
     
-    # Установка Take Profit
     tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": close_side,
@@ -197,14 +180,17 @@ def webhook():
         "closePosition": "true"
     })
     
-    if sl_order.get("code") == 0 and tp_order.get("code") == 0:
+    sl_ok = sl_order.get("code") == 0
+    tp_ok = tp_order.get("code") == 0
+    
+    if sl_ok and tp_ok:
         tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены")
-    elif sl_order.get("code") == 0:
-        tg(f"✅ {s} {si} открыта!\n⚠️ Только SL установлен")
-    elif tp_order.get("code") == 0:
-        tg(f"✅ {s} {si} открыта!\n⚠️ Только TP установлен")
+    elif sl_ok:
+        tg(f"✅ {s} {si} открыта!\n⚠️ Только SL\n❌ TP: {tp_order.get('msg')}")
+    elif tp_ok:
+        tg(f"✅ {s} {si} открыта!\n⚠️ Только TP\n❌ SL: {sl_order.get('msg')}")
     else:
-        tg(f"✅ {s} {si} открыта!\n❌ SL/TP не установлены")
+        tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n❌ TP: {tp_order.get('msg')}")
     
     return jsonify({"s": "ok"})
 
