@@ -12,9 +12,16 @@ BINGX_BASE_URL = "https://open-api.bingx.com"
 TELEGRAM_BOT_TOKEN = "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4"
 TELEGRAM_CHAT_ID = "5411759224"
 
-POSITION_SIZE_USDT = 5
+POSITION_SIZE_USDT = 5  # Для обычных монет
 LEVERAGE = 10
 ALLOWED_TIMEFRAMES = [15]
+
+# Мемкоины с увеличенным размером позиции
+MEME_COINS = {
+    "PEPE-USDT": 50,   # 50 USDT для PEPE
+    "SHIB-USDT": 50,   # 50 USDT для SHIB
+    "FLOKI-USDT": 50,  # 50 USDT для FLOKI
+}
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
@@ -76,7 +83,7 @@ def bx(m, e, p=None):
 
 @app.route("/")
 def home():
-    return "<h1>🚀 BingX Bot</h1><p>One-way mode</p><a href='/test'>Test</a>"
+    return "<h1>🚀 BingX Bot</h1><p>One-way mode + SL/TP</p><a href='/test'>Test</a>"
 
 @app.route("/test")
 def test():
@@ -89,10 +96,14 @@ def webhook():
     d = request.json
     if not d:
         return jsonify({"error": "no json"}), 400
+    
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
     dir = d.get("direction", "").upper()
     sig = d.get("signal", "?")
+    sl_raw = d.get("sl", "na")
+    tp_raw = d.get("tp", "na")
+    
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
     
     if tf not in ALLOWED_TIMEFRAMES:
@@ -106,6 +117,18 @@ def webhook():
     s = SYMBOL_MAP[sym]
     si = "BUY" if dir == "LONG" else "SELL"
     
+    # Проверка SL/TP
+    if sl_raw == "na" or tp_raw == "na":
+        tg(m + "⚠️ Нет SL/TP - пропускаем")
+        return jsonify({"s": "no_sltp"})
+    
+    try:
+        sl = float(sl_raw)
+        tp = float(tp_raw)
+    except:
+        tg(m + "❌ Некорректные SL/TP")
+        return jsonify({"e": "invalid_sltp"}), 400
+    
     # Проверка открытых позиций
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
     if pos.get("code") == 0:
@@ -113,42 +136,79 @@ def webhook():
             if p["symbol"] == s:
                 amt = float(p.get("positionAmt", 0))
                 if amt != 0:
-                    tg(m + f"⚠️ Позиция уже открыта: {amt}")
+                    tg(m + f"⚠️ Позиция уже есть: {amt}")
                     return jsonify({"s": "exists"})
     
+    # Получение цены
     pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
     if pr.get("code") != 0:
         tg(m + "❌ Цена")
         return jsonify({"e": "pr"}), 500
     
-    p = float(pr["data"]["price"])
-    q = round(POSITION_SIZE_USDT / p, QTY_PREC.get(s, 2))
+    price = float(pr["data"]["price"])
     
-    if q < MIN_QTY.get(s, 0.01):
-        tg(m + f"❌ Q: {q}")
+    # Размер позиции (увеличенный для мемкоинов)
+    pos_size = MEME_COINS.get(s, POSITION_SIZE_USDT)
+    
+    qty = round(pos_size / price, QTY_PREC.get(s, 2))
+    
+    if qty < MIN_QTY.get(s, 0.01):
+        tg(m + f"❌ Q: {qty}")
         return jsonify({"e": "q"}), 400
     
-    tg(m + f"💼 {s} {q}")
+    tg(m + f"💼 {s} {qty} ({pos_size} USDT)\nSL: {sl} | TP: {tp}")
     
     # Установка плеча
     bx("POST", "/openApi/swap/v2/trade/leverage", {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
     
-    # ONE-WAY MODE: используем BOTH вместо LONG/SHORT
+    # Открытие позиции
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": si,
-        "positionSide": "BOTH",  # ← ИСПРАВЛЕНО для One-way mode!
+        "positionSide": "BOTH",
         "type": "MARKET",
-        "quantity": str(q)
+        "quantity": str(qty)
     })
     
-    if o.get("code") == 0:
-        tg(f"✅ {s} {si} открыта!")
-        return jsonify({"s": "ok"})
+    if o.get("code") != 0:
+        tg(f"❌ Ошибка открытия: {o.get('msg')}")
+        return jsonify({"e": "ord", "msg": o.get("msg")})
     
-    tg(f"❌ {o.get('msg')}")
-    return jsonify({"e": "ord", "msg": o.get("msg")})
+    # Установка Stop Loss
+    close_side = "SELL" if si == "BUY" else "BUY"
+    
+    sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
+        "symbol": s,
+        "side": close_side,
+        "positionSide": "BOTH",
+        "type": "STOP_MARKET",
+        "stopPrice": str(sl),
+        "closePosition": "true"
+    })
+    
+    # Установка Take Profit
+    tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
+        "symbol": s,
+        "side": close_side,
+        "positionSide": "BOTH",
+        "type": "TAKE_PROFIT_MARKET",
+        "stopPrice": str(tp),
+        "closePosition": "true"
+    })
+    
+    if sl_order.get("code") == 0 and tp_order.get("code") == 0:
+        tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены")
+    elif sl_order.get("code") == 0:
+        tg(f"✅ {s} {si} открыта!\n⚠️ Только SL установлен")
+    elif tp_order.get("code") == 0:
+        tg(f"✅ {s} {si} открыта!\n⚠️ Только TP установлен")
+    else:
+        tg(f"✅ {s} {si} открыта!\n❌ SL/TP не установлены")
+    
+    return jsonify({"s": "ok"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
+
 
