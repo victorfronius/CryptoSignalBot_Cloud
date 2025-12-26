@@ -102,7 +102,7 @@ def webhook():
     dir = d.get("direction", "").upper()
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
-    tp_raw = d.get("tp", "na")
+    tp_raw = d.get("tp1", d.get("tp", "na"))  # Сначала пробуем tp1, потом tp
     
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
     
@@ -209,6 +209,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
-
-
