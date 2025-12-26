@@ -150,7 +150,8 @@ def webhook():
     # Размер позиции (увеличенный для мемкоинов)
     pos_size = MEME_COINS.get(s, POSITION_SIZE_USDT)
     
-    qty = round(pos_size / price, QTY_PREC.get(s, 2))
+    # Расчёт с учётом плеча: (размер * плечо) / цена
+    qty = round((pos_size * LEVERAGE) / price, QTY_PREC.get(s, 2))
     
     if qty < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Q: {qty}")
