@@ -12,7 +12,7 @@ BINGX_BASE_URL = "https://open-api.bingx.com"
 TELEGRAM_BOT_TOKEN = "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4"
 TELEGRAM_CHAT_ID = "5411759224"
 
-POSITION_SIZE_USDT = 5  # Все монеты по 5 USDT
+POSITION_SIZE_USDT = 5
 LEVERAGE = 10
 ALLOWED_TIMEFRAMES = [15]
 
@@ -48,6 +48,14 @@ QTY_PREC = {
     "INJ-USDT": 2, "SUI-USDT": 0,
 }
 
+PRICE_PREC = {
+    "BTC-USDT": 1, "ETH-USDT": 2, "BNB-USDT": 2, "SOL-USDT": 2, "XRP-USDT": 4, "ADA-USDT": 4,
+    "DOGE-USDT": 5, "AVAX-USDT": 2, "MATIC-USDT": 4, "DOT-USDT": 3, "TRX-USDT": 5, "LINK-USDT": 3,
+    "ARB-USDT": 4, "PEPE-USDT": 10, "SHIB-USDT": 8, "FLOKI-USDT": 8, "FTM-USDT": 4, "NEAR-USDT": 3,
+    "ATOM-USDT": 3, "OP-USDT": 3, "APT-USDT": 3, "IMX-USDT": 4, "LDO-USDT": 3, "WLD-USDT": 4,
+    "INJ-USDT": 3, "SUI-USDT": 4,
+}
+
 def tg(msg):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         try:
@@ -74,9 +82,14 @@ def bx(m, e, p=None):
     except:
         return {"code": -1}
 
+def format_price(price, symbol):
+    """Форматирование цены с правильной точностью"""
+    prec = PRICE_PREC.get(symbol, 4)
+    return round(float(price), prec)
+
 @app.route("/")
 def home():
-    return "<h1>🚀 BingX Bot</h1><p>5 USDT × 10x для всех монет</p><a href='/test'>Test</a>"
+    return "<h1>🚀 BingX Bot</h1><p>5 USDT × 10x | Авто SL/TP</p><a href='/test'>Test</a>"
 
 @app.route("/test")
 def test():
@@ -111,16 +124,17 @@ def webhook():
     si = "BUY" if dir == "LONG" else "SELL"
     
     if sl_raw == "na" or tp_raw == "na":
-        tg(m + "⚠️ Нет SL/TP")
+        tg(m + "⚠️ Нет SL/TP - пропускаем")
         return jsonify({"s": "no_sltp"})
     
     try:
-        sl = float(sl_raw)
-        tp = float(tp_raw)
+        sl = format_price(sl_raw, s)
+        tp = format_price(tp_raw, s)
     except:
         tg(m + "❌ Некорректные SL/TP")
         return jsonify({"e": "invalid_sltp"}), 400
     
+    # Проверка позиций
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
     if pos.get("code") == 0:
         for p in pos.get("data", []):
@@ -130,24 +144,25 @@ def webhook():
                     tg(m + f"⚠️ Позиция: {amt}")
                     return jsonify({"s": "exists"})
     
+    # Цена
     pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
     if pr.get("code") != 0:
         tg(m + "❌ Цена")
         return jsonify({"e": "pr"}), 500
     
     price = float(pr["data"]["price"])
-    
-    # Расчёт с учётом плеча
     qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
     
     if qty < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Q: {qty}")
         return jsonify({"e": "q"}), 400
     
-    tg(m + f"💼 {s} {qty} ({POSITION_SIZE_USDT} USDT)\nSL: {sl} | TP: {tp}")
+    tg(m + f"💼 {s} {qty}\nSL: {sl} | TP: {tp}")
     
+    # Плечо
     bx("POST", "/openApi/swap/v2/trade/leverage", {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
     
+    # Открытие
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": si,
@@ -158,26 +173,33 @@ def webhook():
     
     if o.get("code") != 0:
         tg(f"❌ {o.get('msg')}")
-        return jsonify({"e": "ord", "msg": o.get("msg")})
+        return jsonify({"e": "ord"})
+    
+    # Небольшая пауза
+    time.sleep(0.5)
     
     close_side = "SELL" if si == "BUY" else "BUY"
     
+    # Stop Loss
     sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": close_side,
         "positionSide": "BOTH",
         "type": "STOP_MARKET",
         "stopPrice": str(sl),
-        "closePosition": "true"
+        "closePosition": "true",
+        "workingType": "MARK_PRICE"
     })
     
+    # Take Profit
     tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": close_side,
         "positionSide": "BOTH",
         "type": "TAKE_PROFIT_MARKET",
         "stopPrice": str(tp),
-        "closePosition": "true"
+        "closePosition": "true",
+        "workingType": "MARK_PRICE"
     })
     
     sl_ok = sl_order.get("code") == 0
@@ -186,9 +208,9 @@ def webhook():
     if sl_ok and tp_ok:
         tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены")
     elif sl_ok:
-        tg(f"✅ {s} {si} открыта!\n⚠️ Только SL\n❌ TP: {tp_order.get('msg')}")
+        tg(f"✅ {s} {si} открыта!\n✅ SL установлен\n❌ TP: {tp_order.get('msg')}")
     elif tp_ok:
-        tg(f"✅ {s} {si} открыта!\n⚠️ Только TP\n❌ SL: {sl_order.get('msg')}")
+        tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n✅ TP установлен")
     else:
         tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n❌ TP: {tp_order.get('msg')}")
     
