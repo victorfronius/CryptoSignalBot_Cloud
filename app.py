@@ -12,7 +12,7 @@ BINGX_BASE_URL = "https://open-api.bingx.com"
 TELEGRAM_BOT_TOKEN = "8337671886:AAFQk7A6ZYhgu63l9C2cmAj3meTJa7RD3b4"
 TELEGRAM_CHAT_ID = "5411759224"
 
-POSITION_SIZE_USDT = 5
+POSITION_SIZE_USDT = 7
 LEVERAGE = 10
 ALLOWED_TIMEFRAMES = [15]
 
@@ -218,3 +218,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
