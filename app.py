@@ -16,6 +16,14 @@ POSITION_SIZE_USDT = 7
 LEVERAGE = 10
 ALLOWED_TIMEFRAMES = [15]
 
+# =============================================
+# НАСТРОЙКИ BTC ФИЛЬТРА
+# =============================================
+BTC_FILTER_ENABLED = True  # Включить/выключить фильтр
+BTC_EMA_PERIOD = 20  # Период EMA для BTC
+BTC_DEVIATION_THRESHOLD = 0.3  # Порог отклонения от EMA в %
+BTC_NEUTRAL_ALLOW_TRADING = True  # Разрешить торговлю при боковике BTC
+
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
     "BNBUSDT": "BNB-USDT", "BNBUSDT.P": "BNB-USDT", "SOLUSDT": "SOL-USDT", "SOLUSDT.P": "SOL-USDT",
@@ -87,15 +95,114 @@ def format_price(price, symbol):
     prec = PRICE_PREC.get(symbol, 4)
     return round(float(price), prec)
 
+# =============================================
+# BTC ФИЛЬТР - НОВЫЕ ФУНКЦИИ
+# =============================================
+
+def get_btc_klines():
+    """Получаем свечи BTC 15m для расчета EMA"""
+    try:
+        url = f"{BINGX_BASE_URL}/openApi/swap/v2/quote/klines"
+        params = {
+            "symbol": "BTC-USDT",
+            "interval": "15m",
+            "limit": 100
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data.get("code") == 0 and data.get("data"):
+            klines = data["data"]
+            closes = [float(k["close"]) for k in klines]
+            return closes
+        else:
+            print(f"❌ BTC klines error: {data}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ BTC API error: {e}")
+        return None
+
+def calculate_ema(prices, period=20):
+    """Рассчитываем EMA"""
+    if not prices or len(prices) < period:
+        return None
+    
+    # Простая EMA формула
+    ema = prices[0]
+    multiplier = 2 / (period + 1)
+    
+    for price in prices[1:]:
+        ema = (price - ema) * multiplier + ema
+    
+    return ema
+
+def get_btc_trend():
+    """
+    Определяем тренд BTC
+    Возвращает: 'BULLISH', 'BEARISH', 'NEUTRAL' или None
+    """
+    if not BTC_FILTER_ENABLED:
+        return "NEUTRAL"  # Фильтр выключен
+    
+    closes = get_btc_klines()
+    
+    if not closes:
+        return None  # Ошибка получения данных
+    
+    current_price = closes[-1]
+    ema = calculate_ema(closes, BTC_EMA_PERIOD)
+    
+    if not ema:
+        return None
+    
+    # Процент отклонения от EMA
+    deviation = ((current_price - ema) / ema) * 100
+    
+    # Определяем тренд
+    if deviation > BTC_DEVIATION_THRESHOLD:
+        trend = "BULLISH"
+    elif deviation < -BTC_DEVIATION_THRESHOLD:
+        trend = "BEARISH"
+    else:
+        trend = "NEUTRAL"
+    
+    print(f"📊 BTC: {current_price:.1f} | EMA{BTC_EMA_PERIOD}: {ema:.1f} | Dev: {deviation:.2f}% | Trend: {trend}")
+    
+    return trend
+
+# =============================================
+
 @app.route("/")
 def home():
-    return "<h1>🚀 BingX Bot</h1><p>5 USDT × 10x | Авто SL/TP</p><a href='/test'>Test</a>"
+    return "<h1>🚀 BingX Bot</h1><p>7 USDT × 10x | Авто SL/TP | BTC Filter</p><a href='/test'>Test</a> | <a href='/btc'>BTC</a>"
 
 @app.route("/test")
 def test():
     r = bx("GET", "/openApi/swap/v2/user/balance", {})
     tg(f"🧪 {r.get('code')} {r.get('msg', 'OK')}")
     return jsonify(r)
+
+@app.route("/btc")
+def btc_test():
+    """Тестовый endpoint для проверки BTC тренда"""
+    closes = get_btc_klines()
+    if closes:
+        current = closes[-1]
+        ema = calculate_ema(closes, BTC_EMA_PERIOD)
+        deviation = ((current - ema) / ema) * 100 if ema else 0
+        trend = get_btc_trend()
+        
+        return jsonify({
+            "btc_price": round(current, 1),
+            "btc_ema20": round(ema, 1) if ema else None,
+            "deviation": round(deviation, 2),
+            "trend": trend,
+            "filter_enabled": BTC_FILTER_ENABLED
+        })
+    else:
+        return jsonify({"error": "Cannot get BTC data"}), 500
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -111,6 +218,39 @@ def webhook():
     tp_raw = d.get("tp1", d.get("tp", "na"))
     
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
+    
+    # =============================================
+    # BTC ФИЛЬТР - ПРОВЕРКА ТРЕНДА
+    # =============================================
+    if BTC_FILTER_ENABLED:
+        btc_trend = get_btc_trend()
+        
+        if btc_trend is None:
+            tg(m + "⚠️ BTC данные недоступны - пропуск")
+            return jsonify({"status": "btc_error"})
+        
+        # Логика фильтрации
+        if btc_trend == "BULLISH" and dir == "SHORT":
+            tg(m + f"❌ ФИЛЬТР: SHORT против BTC ⬆️\n📊 BTC: BULLISH")
+            return jsonify({"status": "filtered", "reason": "short_against_bullish_btc"})
+        
+        if btc_trend == "BEARISH" and dir == "LONG":
+            tg(m + f"❌ ФИЛЬТР: LONG против BTC ⬇️\n📊 BTC: BEARISH")
+            return jsonify({"status": "filtered", "reason": "long_against_bearish_btc"})
+        
+        if btc_trend == "NEUTRAL" and not BTC_NEUTRAL_ALLOW_TRADING:
+            tg(m + f"⚠️ ФИЛЬТР: BTC боковик - пропуск\n📊 BTC: NEUTRAL")
+            return jsonify({"status": "filtered", "reason": "btc_neutral"})
+        
+        # Сигнал прошел фильтр
+        if btc_trend == "NEUTRAL":
+            m += f"📊 BTC: боковик ✅\n"
+        else:
+            m += f"📊 BTC: {btc_trend} ✅\n"
+    
+    # =============================================
+    # ОСТАЛЬНАЯ ЛОГИКА БЕЗ ИЗМЕНЕНИЙ
+    # =============================================
     
     if tf not in ALLOWED_TIMEFRAMES:
         tg(m + "❌ TF")
@@ -218,4 +358,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
