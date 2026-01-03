@@ -3,6 +3,7 @@ import requests
 import hmac
 import hashlib
 import time
+import threading
 
 app = Flask(__name__)
 
@@ -19,10 +20,18 @@ ALLOWED_TIMEFRAMES = [15]
 # =============================================
 # НАСТРОЙКИ BTC ФИЛЬТРА
 # =============================================
-BTC_FILTER_ENABLED = True  # Включить/выключить фильтр
-BTC_EMA_PERIOD = 20  # Период EMA для BTC
-BTC_DEVIATION_THRESHOLD = 0.5  # Порог отклонения от EMA в %
-BTC_NEUTRAL_ALLOW_TRADING = False  # Разрешить торговлю при боковике BTC
+BTC_FILTER_ENABLED = True
+BTC_EMA_PERIOD = 20
+BTC_DEVIATION_THRESHOLD = 0.5  # Порог 0.5% (было 0.3)
+BTC_NEUTRAL_ALLOW_TRADING = False  # Строгий режим
+
+# =============================================
+# НАСТРОЙКИ VOLUME TRAILING STOP 🚀
+# =============================================
+VOLUME_TRAILING_ENABLED = True  # Включить/выключить Volume trailing
+EXIT_VOLUME_THRESHOLD = 2.0     # Выход когда Volume spike падает ниже 2.0×
+VOLUME_CHECK_INTERVAL = 60      # Проверка каждые 60 секунд
+VOLUME_LOW_CONFIRMATIONS = 2    # Сколько раз подряд низкий Volume перед выходом
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
@@ -64,6 +73,9 @@ PRICE_PREC = {
     "INJ-USDT": 3, "SUI-USDT": 4,
 }
 
+# Глобальный словарь для отслеживания потоков мониторинга
+volume_monitor_threads = {}
+
 def tg(msg):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         try:
@@ -96,7 +108,7 @@ def format_price(price, symbol):
     return round(float(price), prec)
 
 # =============================================
-# BTC ФИЛЬТР - НОВЫЕ ФУНКЦИИ
+# BTC ФИЛЬТР
 # =============================================
 
 def get_btc_klines():
@@ -129,7 +141,6 @@ def calculate_ema(prices, period=20):
     if not prices or len(prices) < period:
         return None
     
-    # Простая EMA формула
     ema = prices[0]
     multiplier = 2 / (period + 1)
     
@@ -139,17 +150,14 @@ def calculate_ema(prices, period=20):
     return ema
 
 def get_btc_trend():
-    """
-    Определяем тренд BTC
-    Возвращает: 'BULLISH', 'BEARISH', 'NEUTRAL' или None
-    """
+    """Определяем тренд BTC"""
     if not BTC_FILTER_ENABLED:
-        return "NEUTRAL"  # Фильтр выключен
+        return "NEUTRAL"
     
     closes = get_btc_klines()
     
     if not closes:
-        return None  # Ошибка получения данных
+        return None
     
     current_price = closes[-1]
     ema = calculate_ema(closes, BTC_EMA_PERIOD)
@@ -157,10 +165,8 @@ def get_btc_trend():
     if not ema:
         return None
     
-    # Процент отклонения от EMA
     deviation = ((current_price - ema) / ema) * 100
     
-    # Определяем тренд
     if deviation > BTC_DEVIATION_THRESHOLD:
         trend = "BULLISH"
     elif deviation < -BTC_DEVIATION_THRESHOLD:
@@ -173,15 +179,196 @@ def get_btc_trend():
     return trend
 
 # =============================================
+# VOLUME TRAILING STOP 🚀
+# =============================================
+
+def get_symbol_klines(symbol, interval="15m", limit=25):
+    """Получить свечи для любого символа"""
+    try:
+        url = f"{BINGX_BASE_URL}/openApi/swap/v2/quote/klines"
+        params = {
+            "symbol": symbol,
+            "interval": interval,
+            "limit": limit
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data.get("code") == 0 and data.get("data"):
+            return data["data"]
+        else:
+            print(f"❌ Klines error for {symbol}: {data}")
+            return None
+            
+    except Exception as e:
+        print(f"❌ Klines API error for {symbol}: {e}")
+        return None
+
+def get_current_volume_spike(symbol):
+    """Получить текущий Volume spike монеты"""
+    try:
+        klines = get_symbol_klines(symbol, "15m", 25)
+        
+        if not klines or len(klines) < 21:
+            return 0
+        
+        # Средний volume за предыдущие 20 свечей (не включая текущую)
+        volumes = [float(k["volume"]) for k in klines[:-5]]
+        avg_volume = sum(volumes) / len(volumes) if volumes else 1
+        
+        # Текущий volume (последняя закрытая свеча)
+        current_volume = float(klines[-1]["volume"])
+        
+        # Spike множитель
+        spike = current_volume / avg_volume if avg_volume > 0 else 0
+        
+        return spike
+    except Exception as e:
+        print(f"❌ Volume spike error for {symbol}: {e}")
+        return 0
+
+def is_position_open_check(symbol):
+    """Проверка открыта ли позиция"""
+    try:
+        pos = bx("GET", "/openApi/swap/v2/user/positions", {})
+        if pos.get("code") == 0:
+            for p in pos.get("data", []):
+                if p["symbol"] == symbol:
+                    amt = float(p.get("positionAmt", 0))
+                    if amt != 0:
+                        return True, amt
+        return False, 0
+    except:
+        return False, 0
+
+def close_position_market(symbol, position_amt):
+    """Закрыть позицию по рынку"""
+    try:
+        # Определяем направление закрытия
+        side = "SELL" if position_amt > 0 else "BUY"
+        qty = abs(position_amt)
+        
+        print(f"🚪 Закрываем {symbol}: {side} {qty}")
+        
+        # Закрываем позицию
+        close_order = bx("POST", "/openApi/swap/v2/trade/order", {
+            "symbol": symbol,
+            "side": side,
+            "positionSide": "BOTH",
+            "type": "MARKET",
+            "quantity": str(qty)
+        })
+        
+        if close_order.get("code") == 0:
+            print(f"✅ Позиция {symbol} закрыта по рынку")
+            return True
+        else:
+            print(f"❌ Ошибка закрытия {symbol}: {close_order.get('msg')}")
+            return False
+            
+    except Exception as e:
+        print(f"❌ Exception при закрытии {symbol}: {e}")
+        return False
+
+def monitor_volume_exit(symbol):
+    """Мониторинг Volume для автовыхода"""
+    
+    print(f"🎯 Volume мониторинг запущен для {symbol}")
+    tg(f"🎯 Volume trailing активирован\n📊 {symbol}\n⚠️ Выход при Volume < {EXIT_VOLUME_THRESHOLD}×")
+    
+    low_volume_count = 0
+    check_count = 0
+    
+    while True:
+        try:
+            time.sleep(VOLUME_CHECK_INTERVAL)
+            check_count += 1
+            
+            # Проверяем что позиция еще открыта
+            is_open, position_amt = is_position_open_check(symbol)
+            
+            if not is_open:
+                print(f"✅ Позиция {symbol} уже закрыта, мониторинг остановлен")
+                if symbol in volume_monitor_threads:
+                    del volume_monitor_threads[symbol]
+                break
+            
+            # Получаем текущий Volume spike
+            current_spike = get_current_volume_spike(symbol)
+            
+            print(f"📊 {symbol} Volume spike: {current_spike:.2f}× (проверка #{check_count})")
+            
+            # Если Volume упал ниже порога
+            if current_spike < EXIT_VOLUME_THRESHOLD:
+                low_volume_count += 1
+                print(f"⚠️ {symbol} Volume низкий ({low_volume_count}/{VOLUME_LOW_CONFIRMATIONS})")
+                
+                # Если достаточно подтверждений
+                if low_volume_count >= VOLUME_LOW_CONFIRMATIONS:
+                    print(f"🚪 {symbol} - Volume spike ушел! Закрываем позицию")
+                    
+                    # Закрываем позицию
+                    if close_position_market(symbol, position_amt):
+                        tg(f"🚪 {symbol} закрыт по Volume trailing\n💨 Volume упал: {current_spike:.1f}× < {EXIT_VOLUME_THRESHOLD}×\n📊 Киты вышли - мы тоже!")
+                    
+                    # Останавливаем мониторинг
+                    if symbol in volume_monitor_threads:
+                        del volume_monitor_threads[symbol]
+                    break
+            else:
+                # Volume нормальный, сбрасываем счетчик
+                if low_volume_count > 0:
+                    print(f"✅ {symbol} Volume восстановился: {current_spike:.2f}×")
+                low_volume_count = 0
+                
+        except Exception as e:
+            print(f"❌ Ошибка в мониторинге {symbol}: {e}")
+            time.sleep(30)  # Пауза при ошибке
+
+def start_volume_monitoring(symbol):
+    """Запустить мониторинг Volume в отдельном потоке"""
+    
+    if not VOLUME_TRAILING_ENABLED:
+        print(f"⚠️ Volume trailing выключен")
+        return
+    
+    # Если уже есть поток для этого символа, не создаем новый
+    if symbol in volume_monitor_threads:
+        print(f"⚠️ Мониторинг для {symbol} уже запущен")
+        return
+    
+    # Создаем и запускаем поток
+    monitor_thread = threading.Thread(
+        target=monitor_volume_exit,
+        args=(symbol,),
+        daemon=True
+    )
+    monitor_thread.start()
+    
+    # Сохраняем ссылку на поток
+    volume_monitor_threads[symbol] = monitor_thread
+    
+    print(f"✅ Поток мониторинга создан для {symbol}")
+
+# =============================================
 
 @app.route("/")
 def home():
-    return "<h1>🚀 BingX Bot</h1><p>7 USDT × 10x | Авто SL/TP | BTC Filter</p><a href='/test'>Test</a> | <a href='/btc'>BTC</a>"
+    status = "🟢 ВКЛ" if VOLUME_TRAILING_ENABLED else "🔴 ВЫКЛ"
+    return f"""
+    <h1>🚀 SUPER FLASK BOT</h1>
+    <p>💎 7 USDT × 10x | Авто SL/TP</p>
+    <p>📊 BTC Filter: {BTC_DEVIATION_THRESHOLD}%</p>
+    <p>⚡ Volume Trailing: {status}</p>
+    <p>🎯 Exit threshold: {EXIT_VOLUME_THRESHOLD}×</p>
+    <a href='/test'>Test</a> | <a href='/btc'>BTC</a> | <a href='/status'>Status</a>
+    """
 
 @app.route("/test")
 def test():
     r = bx("GET", "/openApi/swap/v2/user/balance", {})
-    tg(f"🧪 {r.get('code')} {r.get('msg', 'OK')}")
+    tg(f"🧪 Test: {r.get('code')} {r.get('msg', 'OK')}")
     return jsonify(r)
 
 @app.route("/btc")
@@ -199,10 +386,22 @@ def btc_test():
             "btc_ema20": round(ema, 1) if ema else None,
             "deviation": round(deviation, 2),
             "trend": trend,
-            "filter_enabled": BTC_FILTER_ENABLED
+            "filter_enabled": BTC_FILTER_ENABLED,
+            "threshold": BTC_DEVIATION_THRESHOLD
         })
     else:
         return jsonify({"error": "Cannot get BTC data"}), 500
+
+@app.route("/status")
+def status():
+    """Статус активных мониторингов"""
+    active_monitors = list(volume_monitor_threads.keys())
+    return jsonify({
+        "volume_trailing_enabled": VOLUME_TRAILING_ENABLED,
+        "exit_threshold": EXIT_VOLUME_THRESHOLD,
+        "active_monitors": active_monitors,
+        "monitor_count": len(active_monitors)
+    })
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -220,7 +419,7 @@ def webhook():
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
     
     # =============================================
-    # BTC ФИЛЬТР - ПРОВЕРКА ТРЕНДА
+    # BTC ФИЛЬТР
     # =============================================
     if BTC_FILTER_ENABLED:
         btc_trend = get_btc_trend()
@@ -249,7 +448,7 @@ def webhook():
             m += f"📊 BTC: {btc_trend} ✅\n"
     
     # =============================================
-    # ОСТАЛЬНАЯ ЛОГИКА БЕЗ ИЗМЕНЕНИЙ
+    # ОСТАЛЬНАЯ ЛОГИКА
     # =============================================
     
     if tf not in ALLOWED_TIMEFRAMES:
@@ -345,18 +544,25 @@ def webhook():
     sl_ok = sl_order.get("code") == 0
     tp_ok = tp_order.get("code") == 0
     
-    if sl_ok and tp_ok:
-        tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены")
-    elif sl_ok:
-        tg(f"✅ {s} {si} открыта!\n✅ SL установлен\n❌ TP: {tp_order.get('msg')}")
-    elif tp_ok:
-        tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n✅ TP установлен")
-    else:
-        tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n❌ TP: {tp_order.get('msg')}")
+    # =============================================
+    # ЗАПУСК VOLUME TRAILING МОНИТОРИНГА 🚀
+    # =============================================
     
-    return jsonify({"s": "ok"})
+    # Запускаем мониторинг Volume в отдельном потоке
+    start_volume_monitoring(s)
+    
+    # =============================================
+    
+    if sl_ok and tp_ok:
+        tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены\n🎯 Volume trailing: активен")
+    elif sl_ok:
+        tg(f"✅ {s} {si} открыта!\n✅ SL установлен\n❌ TP: {tp_order.get('msg')}\n🎯 Volume trailing: активен")
+    elif tp_ok:
+        tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n✅ TP установлен\n🎯 Volume trailing: активен")
+    else:
+        tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n❌ TP: {tp_order.get('msg')}\n🎯 Volume trailing: активен")
+    
+    return jsonify({"s": "ok", "volume_trailing": VOLUME_TRAILING_ENABLED})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
-
