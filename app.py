@@ -22,16 +22,17 @@ ALLOWED_TIMEFRAMES = [15]
 # =============================================
 BTC_FILTER_ENABLED = True
 BTC_EMA_PERIOD = 20
-BTC_DEVIATION_THRESHOLD = 0.3  # Порог 0.5% (было 0.3)
+BTC_DEVIATION_THRESHOLD = 0.3  # Смягчили! (было 0.5)
 BTC_NEUTRAL_ALLOW_TRADING = False  # Строгий режим
 
 # =============================================
-# НАСТРОЙКИ VOLUME TRAILING STOP 🚀
+# НАСТРОЙКИ VOLUME TRAILING STOP 🚀 (ИСПРАВЛЕНО!)
 # =============================================
-VOLUME_TRAILING_ENABLED = True  # Включить/выключить Volume trailing
-EXIT_VOLUME_THRESHOLD = 2.0     # Выход когда Volume spike падает ниже 2.0×
-VOLUME_CHECK_INTERVAL = 60      # Проверка каждые 60 секунд
-VOLUME_LOW_CONFIRMATIONS = 2    # Сколько раз подряд низкий Volume перед выходом
+VOLUME_TRAILING_ENABLED = True   # Включить/выключить
+EXIT_VOLUME_THRESHOLD = 0.5      # Выход при КРИТИЧЕСКИ низком Volume (0.5×)
+VOLUME_CHECK_INTERVAL = 180      # Проверка каждые 3 минуты (не каждую минуту!)
+VOLUME_LOW_CONFIRMATIONS = 3     # 3 раза подряд низкий Volume (не 2!)
+MIN_TIME_IN_POSITION = 10        # Минимум 10 минут в позиции перед проверками
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
@@ -179,7 +180,7 @@ def get_btc_trend():
     return trend
 
 # =============================================
-# VOLUME TRAILING STOP 🚀
+# VOLUME TRAILING STOP 🚀 (ИСПРАВЛЕНО!)
 # =============================================
 
 def get_symbol_klines(symbol, interval="15m", limit=25):
@@ -271,11 +272,11 @@ def close_position_market(symbol, position_amt):
         print(f"❌ Exception при закрытии {symbol}: {e}")
         return False
 
-def monitor_volume_exit(symbol):
-    """Мониторинг Volume для автовыхода"""
+def monitor_volume_exit(symbol, entry_time):
+    """Мониторинг Volume для автовыхода (ИСПРАВЛЕННАЯ ВЕРСИЯ!)"""
     
     print(f"🎯 Volume мониторинг запущен для {symbol}")
-    tg(f"🎯 Volume trailing активирован\n📊 {symbol}\n⚠️ Выход при Volume < {EXIT_VOLUME_THRESHOLD}×")
+    tg(f"🎯 Volume trailing активирован\n📊 {symbol}\n⏳ Минимум {MIN_TIME_IN_POSITION} мин в позиции\n⚠️ Выход при Volume < {EXIT_VOLUME_THRESHOLD}× (3 раза подряд)")
     
     low_volume_count = 0
     check_count = 0
@@ -285,11 +286,19 @@ def monitor_volume_exit(symbol):
             time.sleep(VOLUME_CHECK_INTERVAL)
             check_count += 1
             
+            # Время в позиции (в минутах)
+            time_in_position = (time.time() - entry_time) / 60
+            
+            # КРИТИЧНО: Не проверяем первые MIN_TIME_IN_POSITION минут
+            if time_in_position < MIN_TIME_IN_POSITION:
+                print(f"⏳ {symbol} в позиции {time_in_position:.1f} мин - ждем минимум {MIN_TIME_IN_POSITION} мин")
+                continue
+            
             # Проверяем что позиция еще открыта
             is_open, position_amt = is_position_open_check(symbol)
             
             if not is_open:
-                print(f"✅ Позиция {symbol} уже закрыта, мониторинг остановлен")
+                print(f"✅ Позиция {symbol} уже закрыта (TP или SL), мониторинг остановлен")
                 if symbol in volume_monitor_threads:
                     del volume_monitor_threads[symbol]
                 break
@@ -297,40 +306,41 @@ def monitor_volume_exit(symbol):
             # Получаем текущий Volume spike
             current_spike = get_current_volume_spike(symbol)
             
-            print(f"📊 {symbol} Volume spike: {current_spike:.2f}× (проверка #{check_count})")
+            print(f"📊 {symbol} Volume: {current_spike:.2f}× | Время: {time_in_position:.1f} мин | Проверка #{check_count}")
             
-            # Если Volume упал ниже порога
+            # КРИТИЧНО: Проверяем только КРИТИЧЕСКИ низкий Volume (< 0.5×)
+            # Это означает что Volume упал ниже СРЕДНЕГО в 2 раза
             if current_spike < EXIT_VOLUME_THRESHOLD:
                 low_volume_count += 1
-                print(f"⚠️ {symbol} Volume низкий ({low_volume_count}/{VOLUME_LOW_CONFIRMATIONS})")
+                print(f"⚠️ {symbol} Volume КРИТИЧЕСКИ низкий ({low_volume_count}/{VOLUME_LOW_CONFIRMATIONS})")
                 
-                # Если достаточно подтверждений
+                # Если достаточно подтверждений подряд
                 if low_volume_count >= VOLUME_LOW_CONFIRMATIONS:
-                    print(f"🚪 {symbol} - Volume spike ушел! Закрываем позицию")
+                    print(f"🚪 {symbol} - Volume полностью исчез! Закрываем позицию")
                     
                     # Закрываем позицию
                     if close_position_market(symbol, position_amt):
-                        tg(f"🚪 {symbol} закрыт по Volume trailing\n💨 Volume упал: {current_spike:.1f}× < {EXIT_VOLUME_THRESHOLD}×\n📊 Киты вышли - мы тоже!")
+                        tg(f"🚪 {symbol} закрыт по Volume trailing\n💨 Volume критически низкий: {current_spike:.1f}× < {EXIT_VOLUME_THRESHOLD}×\n⏱️ В позиции: {time_in_position:.0f} мин\n📊 Киты полностью вышли")
                     
                     # Останавливаем мониторинг
                     if symbol in volume_monitor_threads:
                         del volume_monitor_threads[symbol]
                     break
             else:
-                # Volume нормальный, сбрасываем счетчик
+                # Volume нормальный или высокий - сбрасываем счетчик
                 if low_volume_count > 0:
-                    print(f"✅ {symbol} Volume восстановился: {current_spike:.2f}×")
+                    print(f"✅ {symbol} Volume восстановился: {current_spike:.2f}× (сброс счетчика)")
                 low_volume_count = 0
                 
         except Exception as e:
             print(f"❌ Ошибка в мониторинге {symbol}: {e}")
-            time.sleep(30)  # Пауза при ошибке
+            time.sleep(60)  # Пауза при ошибке
 
 def start_volume_monitoring(symbol):
     """Запустить мониторинг Volume в отдельном потоке"""
     
     if not VOLUME_TRAILING_ENABLED:
-        print(f"⚠️ Volume trailing выключен")
+        print(f"⚠️ Volume trailing выключен в настройках")
         return
     
     # Если уже есть поток для этого символа, не создаем новый
@@ -338,10 +348,13 @@ def start_volume_monitoring(symbol):
         print(f"⚠️ Мониторинг для {symbol} уже запущен")
         return
     
+    # Текущее время входа
+    entry_time = time.time()
+    
     # Создаем и запускаем поток
     monitor_thread = threading.Thread(
         target=monitor_volume_exit,
-        args=(symbol,),
+        args=(symbol, entry_time),
         daemon=True
     )
     monitor_thread.start()
@@ -357,11 +370,13 @@ def start_volume_monitoring(symbol):
 def home():
     status = "🟢 ВКЛ" if VOLUME_TRAILING_ENABLED else "🔴 ВЫКЛ"
     return f"""
-    <h1>🚀 SUPER FLASK BOT</h1>
+    <h1>🚀 SUPER FLASK BOT v2</h1>
     <p>💎 7 USDT × 10x | Авто SL/TP</p>
-    <p>📊 BTC Filter: {BTC_DEVIATION_THRESHOLD}%</p>
+    <p>📊 BTC Filter: {BTC_DEVIATION_THRESHOLD}% (смягчено!)</p>
     <p>⚡ Volume Trailing: {status}</p>
-    <p>🎯 Exit threshold: {EXIT_VOLUME_THRESHOLD}×</p>
+    <p>🎯 Exit threshold: {EXIT_VOLUME_THRESHOLD}× (критический!)</p>
+    <p>⏳ Min time: {MIN_TIME_IN_POSITION} мин</p>
+    <p>🔍 Check every: {VOLUME_CHECK_INTERVAL//60} мин</p>
     <a href='/test'>Test</a> | <a href='/btc'>BTC</a> | <a href='/status'>Status</a>
     """
 
@@ -399,6 +414,9 @@ def status():
     return jsonify({
         "volume_trailing_enabled": VOLUME_TRAILING_ENABLED,
         "exit_threshold": EXIT_VOLUME_THRESHOLD,
+        "min_time_in_position": MIN_TIME_IN_POSITION,
+        "check_interval_seconds": VOLUME_CHECK_INTERVAL,
+        "low_confirmations": VOLUME_LOW_CONFIRMATIONS,
         "active_monitors": active_monitors,
         "monitor_count": len(active_monitors)
     })
@@ -554,7 +572,7 @@ def webhook():
     # =============================================
     
     if sl_ok and tp_ok:
-        tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены\n🎯 Volume trailing: активен")
+        tg(f"✅ {s} {si} открыта!\n📊 SL/TP установлены\n🎯 Volume trailing: активен (мин {MIN_TIME_IN_POSITION} мин)")
     elif sl_ok:
         tg(f"✅ {s} {si} открыта!\n✅ SL установлен\n❌ TP: {tp_order.get('msg')}\n🎯 Volume trailing: активен")
     elif tp_ok:
@@ -566,4 +584,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
