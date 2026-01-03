@@ -22,7 +22,7 @@ ALLOWED_TIMEFRAMES = [15]
 # =============================================
 BTC_FILTER_ENABLED = True
 BTC_EMA_PERIOD = 20
-BTC_DEVIATION_THRESHOLD = 0.5  # Порог 0.5% (было 0.3)
+BTC_DEVIATION_THRESHOLD = 0.3  # Порог 0.5% (было 0.3)
 BTC_NEUTRAL_ALLOW_TRADING = False  # Строгий режим
 
 # =============================================
@@ -566,3 +566,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
