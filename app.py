@@ -21,7 +21,7 @@ ALLOWED_TIMEFRAMES = [15]
 # =============================================
 BTC_FILTER_ENABLED = True  # Включить/выключить фильтр
 BTC_EMA_PERIOD = 20  # Период EMA для BTC
-BTC_DEVIATION_THRESHOLD = 0.3  # Порог отклонения от EMA в %
+BTC_DEVIATION_THRESHOLD = 0.5  # Порог отклонения от EMA в %
 BTC_NEUTRAL_ALLOW_TRADING = False  # Разрешить торговлю при боковике BTC
 
 SYMBOL_MAP = {
@@ -358,4 +358,5 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
