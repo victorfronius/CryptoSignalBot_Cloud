@@ -32,7 +32,7 @@ VOLUME_TRAILING_ENABLED = True   # Включить/выключить
 EXIT_VOLUME_THRESHOLD = 0.2      # Выход при КРИТИЧЕСКИ низком Volume (0.5×)
 VOLUME_CHECK_INTERVAL = 180      # Проверка каждые 3 минуты (не каждую минуту!)
 VOLUME_LOW_CONFIRMATIONS = 5     # 3 раза подряд низкий Volume (не 2!)
-MIN_TIME_IN_POSITION = 10        # Минимум 10 минут в позиции перед проверками
+MIN_TIME_IN_POSITION = 30        # Минимум 10 минут в позиции перед проверками
 
 SYMBOL_MAP = {
     "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
@@ -584,5 +584,6 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
