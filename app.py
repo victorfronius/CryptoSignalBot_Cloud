@@ -20,7 +20,7 @@ ALLOWED_TIMEFRAMES = [15]
 # =============================================
 # НАСТРОЙКИ BTC ФИЛЬТРА
 # =============================================
-BTC_FILTER_ENABLED = True
+BTC_FILTER_ENABLED = false
 BTC_EMA_PERIOD = 20
 BTC_DEVIATION_THRESHOLD = 0.2  # Смягчили! (было 0.5)
 BTC_NEUTRAL_ALLOW_TRADING = False  # Строгий режим
@@ -28,7 +28,7 @@ BTC_NEUTRAL_ALLOW_TRADING = False  # Строгий режим
 # =============================================
 # НАСТРОЙКИ VOLUME TRAILING STOP 🚀 (ИСПРАВЛЕНО!)
 # =============================================
-VOLUME_TRAILING_ENABLED = True   # Включить/выключить
+VOLUME_TRAILING_ENABLED = false   # Включить/выключить
 EXIT_VOLUME_THRESHOLD = 0.2      # Выход при КРИТИЧЕСКИ низком Volume (0.5×)
 VOLUME_CHECK_INTERVAL = 180      # Проверка каждые 3 минуты (не каждую минуту!)
 VOLUME_LOW_CONFIRMATIONS = 5     # 3 раза подряд низкий Volume (не 2!)
@@ -584,6 +584,7 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
 
 
 
