@@ -15,7 +15,7 @@ TELEGRAM_CHAT_ID = "5411759224"
 
 POSITION_SIZE_USDT = 5  # Для баланса 40 USDT
 LEVERAGE = 10
-ALLOWED_TIMEFRAMES = [15]
+ALLOWED_TIMEFRAMES = [5]  # Только 5m!
 
 # =============================================
 # НАСТРОЙКИ BTC ФИЛЬТРА
