@@ -432,6 +432,12 @@ def webhook():
     try:
         sl = format_price(sl_raw, s)
         tp = format_price(tp_raw, s)
+        
+        # ИСПРАВЛЕНИЕ: Для SHORT меняем SL и TP местами
+        # Pine Script отправляет их в неправильном порядке для шортов
+        if dir == "SHORT":
+            sl, tp = tp, sl  # swap: SL должен быть выше, TP ниже
+            
     except:
         tg(m + "❌ Некорректные SL/TP")
         return jsonify({"e": "invalid_sltp"}), 400
