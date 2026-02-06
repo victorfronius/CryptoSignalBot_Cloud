@@ -86,6 +86,7 @@ def bx(m, e, p=None):
     if not p:
         p = {}
     p["timestamp"] = int(time.time() * 1000)
+    p["recvWindow"] = 10000  # Добавлено для стабильности
     pay = praseParam(p)
     sig = hmac.new(BINGX_SECRET_KEY.encode(), pay.encode(), hashlib.sha256).hexdigest()
     url = f"{BINGX_BASE_URL}{e}?{pay}&signature={sig}"
@@ -234,55 +235,54 @@ def close_position_market(symbol, position_amt):
         })
         
         if close_order.get("code") == 0:
-            print(f"✅ Позиция {symbol} закрыта по рынку")
+            tg(f"✅ {symbol} закрыт по Volume Trailing\n📊 Объем упал ниже {EXIT_VOLUME_THRESHOLD}× от среднего")
             return True
         else:
-            print(f"❌ Ошибка закрытия {symbol}: {close_order.get('msg')}")
+            tg(f"❌ Ошибка закрытия {symbol}: {close_order.get('msg')}")
             return False
             
     except Exception as e:
-        print(f"❌ Exception при закрытии {symbol}: {e}")
+        print(f"❌ Ошибка при закрытии позиции {symbol}: {e}")
         return False
 
 def monitor_volume_exit(symbol, entry_time):
-    print(f"🎯 Volume мониторинг запущен для {symbol}")
-    tg(f"🎯 Volume trailing активирован\n📊 {symbol}\n⏳ Первые {MIN_TIME_IN_POSITION} мин: игнорируем падение Volume\n⚠️ После {MIN_TIME_IN_POSITION} мин: выход при Volume < {EXIT_VOLUME_THRESHOLD}× ({VOLUME_LOW_CONFIRMATIONS} раз = {VOLUME_LOW_CONFIRMATIONS * 3} мин)")
-    
     low_volume_count = 0
-    check_count = 0
+    
+    print(f"🔄 Volume monitor запущен для {symbol}")
+    tg(f"🔄 Мониторинг объема для {symbol}")
     
     while True:
         try:
-            time.sleep(VOLUME_CHECK_INTERVAL)
-            check_count += 1
-            
-            time_in_position = (time.time() - entry_time) / 60
+            time_in_position = time.time() - entry_time
             
             if time_in_position < MIN_TIME_IN_POSITION:
-                print(f"⏳ {symbol} в позиции {time_in_position:.1f} мин - ждем минимум {MIN_TIME_IN_POSITION} мин")
+                print(f"⏳ {symbol} мин. время не прошло: {time_in_position:.0f}s / {MIN_TIME_IN_POSITION}s")
+                time.sleep(60)
                 continue
             
             is_open, position_amt = is_position_open_check(symbol)
             
             if not is_open:
-                print(f"✅ Позиция {symbol} уже закрыта (TP или SL), мониторинг остановлен")
+                print(f"✅ {symbol} уже закрыта - останавливаем мониторинг")
                 if symbol in volume_monitor_threads:
                     del volume_monitor_threads[symbol]
                 break
             
             current_spike = get_current_volume_spike(symbol)
             
-            print(f"📊 {symbol} Volume: {current_spike:.2f}× | Время: {time_in_position:.1f} мин | Проверка #{check_count}")
+            print(f"📊 {symbol} Volume: {current_spike:.2f}× | Threshold: {EXIT_VOLUME_THRESHOLD}× | Count: {low_volume_count}/{VOLUME_LOW_CONFIRMATIONS}")
             
             if current_spike < EXIT_VOLUME_THRESHOLD:
                 low_volume_count += 1
-                print(f"⚠️ {symbol} Volume КРИТИЧЕСКИ низкий ({low_volume_count}/{VOLUME_LOW_CONFIRMATIONS})")
+                print(f"⚠️ {symbol} Низкий объем {low_volume_count}/{VOLUME_LOW_CONFIRMATIONS}")
                 
                 if low_volume_count >= VOLUME_LOW_CONFIRMATIONS:
-                    print(f"🚪 {symbol} - Volume МЕРТВ уже {VOLUME_LOW_CONFIRMATIONS * 3} минут! Закрываем позицию")
+                    print(f"🚨 {symbol} Volume слишком низкий {VOLUME_LOW_CONFIRMATIONS} раз подряд - закрываем")
                     
-                    if close_position_market(symbol, position_amt):
-                        tg(f"🚪 {symbol} закрыт по Volume trailing\n💀 Volume критически низкий: {current_spike:.2f}× < {EXIT_VOLUME_THRESHOLD}×\n⏱️ В позиции: {time_in_position:.0f} мин\n⚠️ Низкий Volume держится {VOLUME_LOW_CONFIRMATIONS * 3} минут")
+                    success = close_position_market(symbol, position_amt)
+                    
+                    if success or not is_position_open_check(symbol)[0]:
+                        print(f"✅ {symbol} успешно закрыт")
                     
                     if symbol in volume_monitor_threads:
                         del volume_monitor_threads[symbol]
@@ -291,6 +291,8 @@ def monitor_volume_exit(symbol, entry_time):
                 if low_volume_count > 0:
                     print(f"✅ {symbol} Volume восстановился: {current_spike:.2f}× (сброс счетчика)")
                 low_volume_count = 0
+            
+            time.sleep(VOLUME_CHECK_INTERVAL)
                 
         except Exception as e:
             print(f"❌ Ошибка в мониторинге {symbol}: {e}")
@@ -323,12 +325,11 @@ def home():
     btc_status = "🟢 ВКЛ" if BTC_FILTER_ENABLED else "🔴 ВЫКЛ"
     vt_status = "🟢 ВКЛ" if VOLUME_TRAILING_ENABLED else "🔴 ВЫКЛ"
     return f"""
-    <h1>🚀 SUPER FLASK BOT - БАЗОВАЯ ВЕРСИЯ</h1>
-    <p>💎 5 USDT × 10x | Только TP/SL</p>
+    <h1>🚀 SUPER FLASK BOT - ИСПРАВЛЕННАЯ ВЕРСИЯ</h1>
+    <p>💎 5 USDT × 10x | TP/SL исправлены</p>
     <p>📊 BTC Filter: {btc_status}</p>
     <p>⚡️ Volume Trailing: {vt_status}</p>
-    <p>🎯 TP: +3% | SL: -3% (фиксированные)</p>
-    <p>🔧 БЕЗ ФИЛЬТРОВ - чистая стратегия TradingView</p>
+    <p>✅ SL/TP теперь работают с quantity</p>
     <a href='/test'>Test</a> | <a href='/btc'>BTC</a> | <a href='/status'>Status</a>
     """
 
@@ -472,17 +473,28 @@ def webhook():
         tg(f"❌ {o.get('msg')}")
         return jsonify({"e": "ord"})
     
-    time.sleep(0.5)
+    # ИСПРАВЛЕНИЕ: Ждем открытия позиции и получаем точный quantity
+    time.sleep(1)
+    
+    actual_qty = qty
+    pos_check = bx("GET", "/openApi/swap/v2/user/positions", {})
+    if pos_check.get("code") == 0:
+        for p in pos_check.get("data", []):
+            if p["symbol"] == s:
+                actual_qty = abs(float(p.get("positionAmt", qty)))
+                print(f"✅ Получен точный quantity позиции: {actual_qty}")
+                break
     
     close_side = "SELL" if si == "BUY" else "BUY"
     
+    # ИСПРАВЛЕНИЕ: Используем quantity вместо closePosition
     sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol": s,
         "side": close_side,
         "positionSide": "BOTH",
         "type": "STOP_MARKET",
         "stopPrice": str(sl),
-        "closePosition": "true",
+        "quantity": str(actual_qty),  # ← ИСПРАВЛЕНО
         "workingType": "MARK_PRICE"
     })
     
@@ -492,7 +504,7 @@ def webhook():
         "positionSide": "BOTH",
         "type": "TAKE_PROFIT_MARKET",
         "stopPrice": str(tp),
-        "closePosition": "true",
+        "quantity": str(actual_qty),  # ← ИСПРАВЛЕНО
         "workingType": "MARK_PRICE"
     })
     
@@ -504,7 +516,7 @@ def webhook():
     price_prec = PRICE_PREC.get(s, 4)
     
     if sl_ok and tp_ok:
-        tg(f"✅ {s} {si} открыта!\n📊 SL: {sl:.{price_prec}f} | TP: {tp:.{price_prec}f}\n💎 Позиция: {qty} × {LEVERAGE}x = {abs(qty * price):.2f} USDT\n🎯 БАЗОВАЯ версия")
+        tg(f"✅ {s} {si} открыта!\n📊 SL: {sl:.{price_prec}f} | TP: {tp:.{price_prec}f}\n💎 Позиция: {actual_qty} × {LEVERAGE}x = {abs(actual_qty * price):.2f} USDT\n✅ SL/TP установлены")
     elif sl_ok:
         tg(f"✅ {s} {si} открыта!\n✅ SL: {sl:.{price_prec}f}\n❌ TP: {tp_order.get('msg')}")
     elif tp_ok:
@@ -512,8 +524,7 @@ def webhook():
     else:
         tg(f"✅ {s} {si} открыта!\n❌ SL: {sl_order.get('msg')}\n❌ TP: {tp_order.get('msg')}")
     
-    return jsonify({"s": "ok", "mode": "basic"})
+    return jsonify({"s": "ok", "mode": "fixed"})
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
