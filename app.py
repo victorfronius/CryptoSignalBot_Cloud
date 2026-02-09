@@ -170,7 +170,7 @@ def webhook():
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
-    dir = d.get("action", d.get("direction", "")).upper()
+    dir = d.get("direction", "").upper()
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
     tp_raw = d.get("tp1", d.get("tp", "na"))
@@ -196,9 +196,12 @@ def webhook():
         sl = format_price(sl_raw, s)
         tp = format_price(tp_raw, s)
         
+        print(f"DEBUG BEFORE SWAP: dir={dir}, sl={sl}, tp={tp}")
+        
         # КРИТИЧЕСКИ ВАЖНО: для SHORT меняем местами
         if dir == "SHORT":
             sl, tp = tp, sl
+            print(f"DEBUG AFTER SWAP: dir={dir}, sl={sl}, tp={tp}")
             
     except:
         tg(m + "❌ Некорректные SL/TP")
@@ -306,4 +309,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
