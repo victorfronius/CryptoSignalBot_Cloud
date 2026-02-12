@@ -202,6 +202,18 @@ def webhook():
         if dir == "SHORT":
             sl, tp = tp, sl
             print(f"DEBUG AFTER SWAP: dir={dir}, sl={sl}, tp={tp}")
+
+        # Минимальное расстояние TP = 1% от цены
+        pr_check = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
+        if pr_check.get("code") == 0:
+            cur_price = float(pr_check["data"]["price"])
+            min_dist = cur_price * 0.01
+            if dir == "LONG" and (tp - cur_price) < min_dist:
+                tp = format_price(cur_price * 1.01, s)
+                print(f"DEBUG TP adjusted LONG: {tp}")
+            elif dir == "SHORT" and (cur_price - tp) < min_dist:
+                tp = format_price(cur_price * 0.99, s)
+                print(f"DEBUG TP adjusted SHORT: {tp}")
             
     except:
         tg(m + "❌ Некорректные SL/TP")
