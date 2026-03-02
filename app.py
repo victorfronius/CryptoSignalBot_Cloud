@@ -5,7 +5,7 @@ import hashlib
 import time
 import threading
 
-app = Flask(__name__)
+app = Flask(name)
 
 BINGX_API_KEY = "BMWtI97RFrKmpBEQoOvcxWA6oeL60gnWqrUqSeDNbALuBgmlyYw4KfYFfBfSqNptKN0U5jhOO4gQvOs0qiPA"
 BINGX_SECRET_KEY = "qvkjbJn2yIGHaTXvfUu9a9o01UgC2S88xaDhkO2buJVdDik25ovPyzkQwCZ6O9Je6h7mKF5nBnM97YVgfvUQ"
@@ -170,7 +170,7 @@ def webhook():
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
-    dir = d.get("direction", "").upper()
+    dir = d.get("action", "").upper()  # ИСПРАВЛЕНО: action вместо direction
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
     tp_raw = d.get("tp1", d.get("tp", "na"))
@@ -196,14 +196,11 @@ def webhook():
         sl = format_price(sl_raw, s)
         tp = format_price(tp_raw, s)
         
-        print(f"DEBUG BEFORE SWAP: dir={dir}, sl={sl}, tp={tp}")
+        print(f"DEBUG: dir={dir}, sl={sl}, tp={tp}")
         
-        # КРИТИЧЕСКИ ВАЖНО: для SHORT меняем местами
-        if dir == "SHORT":
-            sl, tp = tp, sl
-            print(f"DEBUG AFTER SWAP: dir={dir}, sl={sl}, tp={tp}")
+        # SWAP УДАЛЁН! Индикатор присылает правильные значения
 
-        # Минимальное расстояние TP = 1% от цены
+# Минимальное расстояние TP = 1% от цены
         pr_check = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
         if pr_check.get("code") == 0:
             cur_price = float(pr_check["data"]["price"])
@@ -319,5 +316,5 @@ def webhook():
     
     return jsonify({"s": "ok"})
 
-if __name__ == "__main__":
+if name == "main":
     app.run(host="0.0.0.0", port=5000)
