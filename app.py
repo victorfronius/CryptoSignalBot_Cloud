@@ -5,7 +5,7 @@ import hashlib
 import time
 import threading
 
-app = Flask(name)
+app = Flask(__name__)
 
 BINGX_API_KEY = "BMWtI97RFrKmpBEQoOvcxWA6oeL60gnWqrUqSeDNbALuBgmlyYw4KfYFfBfSqNptKN0U5jhOO4gQvOs0qiPA"
 BINGX_SECRET_KEY = "qvkjbJn2yIGHaTXvfUu9a9o01UgC2S88xaDhkO2buJVdDik25ovPyzkQwCZ6O9Je6h7mKF5nBnM97YVgfvUQ"
@@ -199,8 +199,8 @@ def webhook():
         print(f"DEBUG: dir={dir}, sl={sl}, tp={tp}")
         
         # SWAP УДАЛЁН! Индикатор присылает правильные значения
-
-# Минимальное расстояние TP = 1% от цены
+        
+        # Минимальное расстояние TP = 1% от цены
         pr_check = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
         if pr_check.get("code") == 0:
             cur_price = float(pr_check["data"]["price"])
@@ -316,5 +316,5 @@ def webhook():
     
     return jsonify({"s": "ok"})
 
-if name == "main":
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
