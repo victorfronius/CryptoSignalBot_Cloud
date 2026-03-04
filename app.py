@@ -164,13 +164,32 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
+    """Быстрый ответ TradingView + обработка в фоне"""
+    d = request.json
+    if not d:
+        return jsonify({"error": "no json"}), 400
+    
+    # Запускаем обработку в отдельном потоке
+    def process_order():
+        try:
+            _process_webhook_logic(d)
+        except Exception as e:
+            tg(f"❌ Ошибка: {str(e)}")
+    
+    threading.Thread(target=process_order, daemon=True).start()
+    
+    # Сразу отвечаем TradingView (< 1 секунда)
+    return jsonify({"status": "accepted"}), 200
+
+def _process_webhook_logic(d):
+    """Основная логика обработки (выполняется в фоне)"""
     d = request.json
     if not d:
         return jsonify({"error": "no json"}), 400
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
-    dir = d.get("action", "").upper()  # ИСПРАВЛЕНО: action вместо direction
+    dir = d.get("action", "").upper()  # action, не direction!
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
     tp_raw = d.get("tp1", d.get("tp", "na"))
@@ -196,11 +215,9 @@ def webhook():
         sl = format_price(sl_raw, s)
         tp = format_price(tp_raw, s)
         
-        print(f"DEBUG: dir={dir}, sl={sl}, tp={tp}")
-        
-        # SWAP УДАЛЁН! Индикатор присылает правильные значения
-        
-        # Минимальное расстояние TP = 1% от цены
+        # SWAP УДАЛЁН - индикатор присылает правильные значения
+
+# Минимальное расстояние TP = 1% от цены
         pr_check = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
         if pr_check.get("code") == 0:
             cur_price = float(pr_check["data"]["price"])
