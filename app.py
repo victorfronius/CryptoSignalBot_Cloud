@@ -15,7 +15,7 @@ TELEGRAM_CHAT_ID = "5411759224"
 
 POSITION_SIZE_USDT = 5
 LEVERAGE = 10
-ALLOWED_TIMEFRAMES = [5]
+ALLOWED_TIMEFRAMES = [15]
 
 BTC_FILTER_ENABLED = False
 BTC_EMA_PERIOD = 20
@@ -316,3 +316,4 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
+
