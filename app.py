@@ -70,6 +70,10 @@ PRICE_PREC = {
 
 volume_monitor_threads = {}
 
+# Cooldown — время последней сделки по каждой паре (unix timestamp)
+last_trade_time = {}
+COOLDOWN_SECONDS = 4 * 60 * 60  # 4 часа между сделками на одной паре
+
 def tg(msg):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         try:
@@ -156,10 +160,10 @@ def is_position_open_check(symbol):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 ELLIOTT WAVE BOT V3</h1>
+    <h1>🚀 Elliott Wave Bot</h1>
     <p>💎 5 USDT × 10x</p>
-    <p>✅ SL/TP с правильным swap для SHORT</p>
-    <p>✅ reduceOnly для экономии маржи</p>
+    <p>✅ SL/TP автоматически</p>
+    <p>✅ Cooldown защита от двойных входов</p>
     """
 
 @app.route("/webhook", methods=["POST"])
@@ -170,7 +174,7 @@ def webhook():
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
-    dir = d.get("action", "").upper()
+    dir = d.get("action", "").upper()  # ИСПРАВЛЕНО: action вместо direction
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
     tp_raw = d.get("tp1", d.get("tp", "na"))
@@ -178,27 +182,29 @@ def webhook():
     m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
     
     if tf not in ALLOWED_TIMEFRAMES:
-        tg(m + "❌ TF")
+        tg(m + "❌ Неверный таймфрейм")
         return jsonify({"s": "tf"})
     
     if sym not in SYMBOL_MAP:
-        tg(m + "❌ SYM")
+        tg(m + "❌ Неизвестная пара")
         return jsonify({"e": "sym"}), 400
     
     s = SYMBOL_MAP[sym]
     si = "BUY" if dir == "LONG" else "SELL"
     
     if sl_raw == "na" or tp_raw == "na":
-        tg(m + "⚠️ Нет SL/TP - пропускаем")
+        tg(m + "⚠️ Нет SL/TP — пропускаем")
         return jsonify({"s": "no_sltp"})
     
     try:
         sl = format_price(sl_raw, s)
         tp = format_price(tp_raw, s)
         
-        # SWAP удалён - индикатор присылает правильные значения
-
-# Минимальное расстояние TP = 1% от цены
+        print(f"DEBUG: dir={dir}, sl={sl}, tp={tp}")
+        
+        # SWAP УДАЛЁН! Индикатор присылает правильные значения
+        
+        # Минимальное расстояние TP = 1% от цены
         pr_check = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
         if pr_check.get("code") == 0:
             cur_price = float(pr_check["data"]["price"])
@@ -214,6 +220,14 @@ def webhook():
         tg(m + "❌ Некорректные SL/TP")
         return jsonify({"e": "invalid_sltp"}), 400
     
+    # Проверка cooldown — не торгуем одну пару чаще раза в 4 часа
+    now = time.time()
+    last = last_trade_time.get(s, 0)
+    if now - last < COOLDOWN_SECONDS:
+        wait_min = int((COOLDOWN_SECONDS - (now - last)) / 60)
+        tg(m + f"⏳ Cooldown {s}: ещё {wait_min} мин")
+        return jsonify({"s": "cooldown"})
+
     # Проверка существующей позиции
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
     if pos.get("code") == 0:
@@ -234,7 +248,7 @@ def webhook():
     qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
     
     if qty < MIN_QTY.get(s, 0.01):
-        tg(m + f"❌ Quantity слишком мал: {qty}")
+        tg(m + f"❌ Объём слишком мал: {qty}")
         return jsonify({"e": "q"}), 400
     
     tg(m + f"💼 {s} {qty}\nSL: {sl} | TP: {tp}")
@@ -252,8 +266,11 @@ def webhook():
     })
     
     if o.get("code") != 0:
-        tg(f"❌ Ошибка открытия: {o.get('msg')}")
+        tg(f"❌ Ошибка открытия: {o.get("msg")}")
         return jsonify({"e": "ord"})
+
+    # Сохраняем время успешного входа
+    last_trade_time[s] = time.time()
     
     # Ждем подтверждения позиции
     time.sleep(1.5)
@@ -286,7 +303,8 @@ def webhook():
         "symbol": s,
         "side": close_side,
         "positionSide": "BOTH",
-        "type": "TAKE_PROFIT_MARKET",
+
+"type": "TAKE_PROFIT_MARKET",
         "stopPrice": str(tp),
         "quantity": str(actual_qty),
         "reduceOnly": "true",
@@ -316,4 +334,3 @@ def webhook():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-
