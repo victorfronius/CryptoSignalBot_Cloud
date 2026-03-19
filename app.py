@@ -168,9 +168,14 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    d = request.json
+    d = request.get_json(force=True, silent=True)
     if not d:
         return jsonify({"error": "no json"}), 400
+    # Отвечаем TradingView немедленно во избежание timeout
+    threading.Thread(target=process_signal, args=(d,)).start()
+    return jsonify({"s": "ok"}), 200
+
+def process_signal(d):
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
@@ -269,7 +274,7 @@ def webhook():
         tg(f"❌ Ошибка открытия: {o.get("msg")}")
         return jsonify({"e": "ord"})
 
-    # Сохраняем время успешного входа
+# Сохраняем время успешного входа
     last_trade_time[s] = time.time()
     
     # Ждем подтверждения позиции
@@ -330,7 +335,6 @@ def webhook():
             msg_parts.append(f"✅ TP: {tp:.{price_prec}f}")
         tg("\n".join(msg_parts))
     
-    return jsonify({"s": "ok"})
+    pass  # завершено
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
