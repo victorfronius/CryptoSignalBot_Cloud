@@ -169,9 +169,13 @@ def home():
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
-    d = request.json
+    d = request.get_json(force=True, silent=True)
     if not d:
         return jsonify({"error": "no json"}), 400
+    threading.Thread(target=process_signal, args=(d,)).start()
+    return jsonify({"s": "ok"}), 200
+
+def process_signal(d):
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
@@ -267,7 +271,7 @@ def webhook():
     })
     
     if o.get("code") != 0:
-        tg(f"❌ Ошибка открытия: {o.get("msg")}")
+        tg(f"❌ Ошибка открытия: {o.get('msg')}")
         return jsonify({"e": "ord"})
 
     # Сохраняем время успешного входа
@@ -304,8 +308,7 @@ def webhook():
         "symbol": s,
         "side": close_side,
         "positionSide": "BOTH",
-
-"type": "TAKE_PROFIT_MARKET",
+        "type": "TAKE_PROFIT_MARKET",
         "stopPrice": str(tp),
         "quantity": str(actual_qty),
         "reduceOnly": "true",
@@ -331,7 +334,6 @@ def webhook():
             msg_parts.append(f"✅ TP: {tp:.{price_prec}f}")
         tg("\n".join(msg_parts))
     
-    return jsonify({"s": "ok"})
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000
+    app.run(host="0.0.0.0", port=5000)
