@@ -335,6 +335,7 @@ def process_signal(d):
             msg_parts.append(f"✅ TP: {tp:.{price_prec}f}")
         tg("\n".join(msg_parts))
     
-    pass  # завершено
+
 
 if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
