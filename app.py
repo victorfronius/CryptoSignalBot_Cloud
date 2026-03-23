@@ -180,6 +180,34 @@ def process_signal(d):
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
     dir = d.get("action", "").upper()  # ИСПРАВЛЕНО: action вместо direction
+
+    # ── EXIT сигнал — закрыть позицию по рынку ──
+    if dir in ("EXIT_LONG", "EXIT_SHORT"):
+        if sym not in SYMBOL_MAP:
+            return
+        s = SYMBOL_MAP[sym]
+        pos = bx("GET", "/openApi/swap/v2/user/positions", {})
+        if pos.get("code") == 0:
+            for p in pos.get("data", []):
+                if p["symbol"] == s:
+                    amt = float(p.get("positionAmt", 0))
+                    if amt != 0:
+                        close_side = "SELL" if amt > 0 else "BUY"
+                        result = bx("POST", "/openApi/swap/v2/trade/order", {
+                            "symbol": s,
+                            "side": close_side,
+                            "positionSide": "BOTH",
+                            "type": "MARKET",
+                            "quantity": str(abs(amt)),
+                            "reduceOnly": "true"
+                        })
+                        if result.get("code") == 0:
+                            tg(f"🚨 EXIT {s}\nРазворот на 5m — позиция закрыта\n{dir} | {abs(amt)} контрактов")
+                            # Сбрасываем cooldown чтобы можно было войти в новую сделку
+                            last_trade_time[s] = 0
+                        else:
+                            tg(f"❌ EXIT {s} ошибка: {result.get('msg')}")
+        return
     sig = d.get("signal", "?")
     sl_raw = d.get("sl", "na")
     tp_raw = d.get("tp1", d.get("tp", "na"))
