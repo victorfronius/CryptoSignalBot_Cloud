@@ -75,6 +75,15 @@ volume_monitor_threads = {}
 last_trade_time = {}
 COOLDOWN_SECONDS = 4 * 60 * 60  # 4 часа между сделками на одной паре
 
+# Трейлинг стоп — безубыток
+BREAKEVEN_ENABLED       = True
+BREAKEVEN_TRIGGER_PCT   = 2.5   # при +2.5% переносим SL
+BREAKEVEN_OFFSET_PCT    = 0.5   # SL = цена входа + 0.5%
+BREAKEVEN_CHECK_INTERVAL = 120  # проверка каждые 120 сек
+
+# Словарь: symbol -> {"entry": float, "side": "BUY"/"SELL", "be_done": bool}
+active_positions = {}
+
 def tg(msg):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         try:
@@ -158,10 +167,77 @@ def is_position_open_check(symbol):
     except:
         return False, 0
 
+def breakeven_monitor():
+    """Фоновый поток — проверяет позиции и переносит SL в безубыток"""
+    while True:
+        try:
+            if BREAKEVEN_ENABLED and active_positions:
+                for sym, info in list(active_positions.items()):
+                    if info.get("be_done"):
+                        continue
+                    entry = info["entry"]
+                    side  = info["side"]
+                    try:
+                        pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": sym})
+                        if pr.get("code") != 0:
+                            continue
+                        cur_price = float(pr["data"]["price"])
+                        # Считаем прибыль в %
+                        if side == "BUY":
+                            profit_pct = (cur_price - entry) / entry * 100
+                        else:
+                            profit_pct = (entry - cur_price) / entry * 100
+                        # Если прибыль >= триггера — переносим SL
+                        if profit_pct >= BREAKEVEN_TRIGGER_PCT:
+                            if side == "BUY":
+                                new_sl = round(entry * (1 + BREAKEVEN_OFFSET_PCT / 100), PRICE_PREC.get(sym, 4))
+                            else:
+                                new_sl = round(entry * (1 - BREAKEVEN_OFFSET_PCT / 100), PRICE_PREC.get(sym, 4))
+                            # Отменяем старый SL и ставим новый
+                            # Сначала отменяем все открытые стоп ордера по паре
+                            orders = bx("GET", "/openApi/swap/v2/trade/openOrders", {"symbol": sym})
+                            if orders.get("code") == 0:
+                                for o in orders.get("data", {}).get("orders", []):
+                                    if o.get("type") in ("STOP_MARKET", "STOP") and o.get("reduceOnly"):
+                                        bx("DELETE", "/openApi/swap/v2/trade/order", {
+                                            "symbol": sym,
+                                            "orderId": o["orderId"]
+                                        })
+                            # Получаем актуальный объём позиции
+                            pos_data = bx("GET", "/openApi/swap/v2/user/positions", {})
+                            actual_qty = 0
+                            if pos_data.get("code") == 0:
+                                for p in pos_data.get("data", []):
+                                    if p["symbol"] == sym:
+                                        actual_qty = abs(float(p.get("positionAmt", 0)))
+                            if actual_qty > 0:
+                                close_side = "SELL" if side == "BUY" else "BUY"
+                                sl_result = bx("POST", "/openApi/swap/v2/trade/order", {
+                                    "symbol": sym,
+                                    "side": close_side,
+                                    "positionSide": "BOTH",
+                                    "type": "STOP_MARKET",
+                                    "stopPrice": str(new_sl),
+                                    "quantity": str(actual_qty),
+                                    "reduceOnly": "true",
+                                    "workingType": "MARK_PRICE"
+                                })
+                                if sl_result.get("code") == 0:
+                                    active_positions[sym]["be_done"] = True
+                                    tg(f"🔒 Безубыток {sym}\nПрибыль {profit_pct:.1f}% → SL перенесён на {new_sl}")
+                    except Exception as e:
+                        print(f"Breakeven error {sym}: {e}")
+        except Exception as e:
+            print(f"Breakeven monitor error: {e}")
+        time.sleep(BREAKEVEN_CHECK_INTERVAL)
+
+# Запускаем мониторинг безубытка в фоне
+threading.Thread(target=breakeven_monitor, daemon=True).start()
+
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot</h1>
+    <h1>🚀 Elliott Wave Bot v5</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ SL/TP автоматически</p>
     <p>✅ Cooldown защита от двойных входов</p>
@@ -203,8 +279,9 @@ def process_signal(d):
                         })
                         if result.get("code") == 0:
                             tg(f"🚨 EXIT {s}\nРазворот на 5m — позиция закрыта\n{dir} | {abs(amt)} контрактов")
-                            # Сбрасываем cooldown чтобы можно было войти в новую сделку
+                            # Сбрасываем cooldown и данные позиции
                             last_trade_time[s] = 0
+                            active_positions.pop(s, None)
                         else:
                             tg(f"❌ EXIT {s} ошибка: {result.get('msg')}")
         return
@@ -304,6 +381,8 @@ def process_signal(d):
 
     # Сохраняем время успешного входа
     last_trade_time[s] = time.time()
+    # Сохраняем данные для трейлинг стопа
+    active_positions[s] = {"entry": price, "side": si, "be_done": False}
     
     # Ждем подтверждения позиции
     time.sleep(1.5)
