@@ -79,7 +79,7 @@ COOLDOWN_SECONDS = 4 * 60 * 60  # 4 часа между сделками на о
 BREAKEVEN_ENABLED       = True
 BREAKEVEN_TRIGGER_PCT   = 2.5   # при +2.5% переносим SL
 BREAKEVEN_OFFSET_PCT    = 0.5   # SL = цена входа + 0.5%
-BREAKEVEN_CHECK_INTERVAL = 120  # проверка каждые 120 сек
+BREAKEVEN_CHECK_INTERVAL = 30   # проверка каждые 30 сек
 
 # Словарь: symbol -> {"entry": float, "side": "BUY"/"SELL", "be_done": bool}
 active_positions = {}
@@ -180,6 +180,7 @@ def breakeven_monitor():
                     try:
                         pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": sym})
                         if pr.get("code") != 0:
+                            print(f"BE: не удалось получить цену {sym}")
                             continue
                         cur_price = float(pr["data"]["price"])
                         # Считаем прибыль в %
@@ -187,6 +188,7 @@ def breakeven_monitor():
                             profit_pct = (cur_price - entry) / entry * 100
                         else:
                             profit_pct = (entry - cur_price) / entry * 100
+                        print(f"BE мониторинг {sym}: вход={entry}, цена={cur_price}, прибыль={profit_pct:.2f}%")
                         # Если прибыль >= триггера — переносим SL
                         if profit_pct >= BREAKEVEN_TRIGGER_PCT:
                             if side == "BUY":
@@ -222,9 +224,12 @@ def breakeven_monitor():
                                     "reduceOnly": "true",
                                     "workingType": "MARK_PRICE"
                                 })
+                                print(f"BE SL ордер {sym}: {sl_result}")
                                 if sl_result.get("code") == 0:
                                     active_positions[sym]["be_done"] = True
                                     tg(f"🔒 Безубыток {sym}\nПрибыль {profit_pct:.1f}% → SL перенесён на {new_sl}")
+                                else:
+                                    print(f"BE SL ошибка {sym}: {sl_result.get('msg')}")
                     except Exception as e:
                         print(f"Breakeven error {sym}: {e}")
         except Exception as e:
@@ -237,7 +242,7 @@ threading.Thread(target=breakeven_monitor, daemon=True).start()
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v5</h1>
+    <h1>🚀 Elliott Wave Bot v6</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ SL/TP автоматически</p>
     <p>✅ Cooldown защита от двойных входов</p>
@@ -293,18 +298,18 @@ def process_signal(d):
     
     if tf not in ALLOWED_TIMEFRAMES:
         tg(m + "❌ Неверный таймфрейм")
-        return jsonify({"s": "tf"})
+        return
     
     if sym not in SYMBOL_MAP:
         tg(m + "❌ Неизвестная пара")
-        return jsonify({"e": "sym"}), 400
+        return
     
     s = SYMBOL_MAP[sym]
     si = "BUY" if dir == "LONG" else "SELL"
     
     if sl_raw == "na" or tp_raw == "na":
         tg(m + "⚠️ Нет SL/TP — пропускаем")
-        return jsonify({"s": "no_sltp"})
+        return
     
     try:
         sl = format_price(sl_raw, s)
@@ -328,7 +333,7 @@ def process_signal(d):
             
     except:
         tg(m + "❌ Некорректные SL/TP")
-        return jsonify({"e": "invalid_sltp"}), 400
+        return
     
     # Проверка cooldown — не торгуем одну пару чаще раза в 4 часа
     now = time.time()
@@ -336,7 +341,7 @@ def process_signal(d):
     if now - last < COOLDOWN_SECONDS:
         wait_min = int((COOLDOWN_SECONDS - (now - last)) / 60)
         tg(m + f"⏳ Cooldown {s}: ещё {wait_min} мин")
-        return jsonify({"s": "cooldown"})
+        return
 
     # Проверка существующей позиции
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
@@ -346,20 +351,20 @@ def process_signal(d):
                 amt = float(p.get("positionAmt", 0))
                 if amt != 0:
                     tg(m + f"⚠️ Позиция уже есть: {amt}")
-                    return jsonify({"s": "exists"})
+                    return
     
     # Получение цены
     pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
     if pr.get("code") != 0:
         tg(m + "❌ Цена недоступна")
-        return jsonify({"e": "pr"}), 500
+        return
     
     price = float(pr["data"]["price"])
     qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
     
     if qty < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Объём слишком мал: {qty}")
-        return jsonify({"e": "q"}), 400
+        return
     
     tg(m + f"💼 {s} {qty}\nSL: {sl} | TP: {tp}")
     
@@ -377,12 +382,13 @@ def process_signal(d):
     
     if o.get("code") != 0:
         tg(f"❌ Ошибка открытия: {o.get('msg')}")
-        return jsonify({"e": "ord"})
+        return
 
     # Сохраняем время успешного входа
     last_trade_time[s] = time.time()
     # Сохраняем данные для трейлинг стопа
     active_positions[s] = {"entry": price, "side": si, "be_done": False}
+    print(f"BE: позиция сохранена {s}, вход={price}, side={si}")
     
     # Ждем подтверждения позиции
     time.sleep(1.5)
