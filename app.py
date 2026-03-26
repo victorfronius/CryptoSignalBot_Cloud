@@ -1,4 +1,3 @@
-
 from flask import Flask, request, jsonify
 import requests
 import hmac
@@ -77,9 +76,9 @@ COOLDOWN_SECONDS = 4 * 60 * 60  # 4 часа между сделками на о
 
 # Трейлинг стоп — безубыток
 BREAKEVEN_ENABLED       = True
-BREAKEVEN_TRIGGER_PCT   = 2.5   # при +2.5% переносим SL
+BREAKEVEN_TRIGGER_PCT   = 1.5   # при +1.5% переносим SL
 BREAKEVEN_OFFSET_PCT    = 0.5   # SL = цена входа + 0.5%
-BREAKEVEN_CHECK_INTERVAL = 30   # проверка каждые 30 сек
+BREAKEVEN_CHECK_INTERVAL = 60   # проверка каждые 60 сек
 
 # Словарь: symbol -> {"entry": float, "side": "BUY"/"SELL", "be_done": bool}
 active_positions = {}
@@ -181,6 +180,7 @@ def breakeven_monitor():
                         pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": sym})
                         if pr.get("code") != 0:
                             print(f"BE: не удалось получить цену {sym}")
+                            time.sleep(5)
                             continue
                         cur_price = float(pr["data"]["price"])
                         # Считаем прибыль в %
@@ -189,6 +189,7 @@ def breakeven_monitor():
                         else:
                             profit_pct = (entry - cur_price) / entry * 100
                         print(f"BE мониторинг {sym}: вход={entry}, цена={cur_price}, прибыль={profit_pct:.2f}%")
+                        time.sleep(1)  # пауза между запросами
                         # Если прибыль >= триггера — переносим SL
                         if profit_pct >= BREAKEVEN_TRIGGER_PCT:
                             if side == "BUY":
@@ -242,7 +243,7 @@ threading.Thread(target=breakeven_monitor, daemon=True).start()
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v6</h1>
+    <h1>🚀 Elliott Wave Bot v7</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ SL/TP автоматически</p>
     <p>✅ Cooldown защита от двойных входов</p>
