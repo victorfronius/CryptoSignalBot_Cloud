@@ -243,7 +243,7 @@ threading.Thread(target=breakeven_monitor, daemon=True).start()
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v8</h1>
+    <h1>🚀 Elliott Wave Bot v7</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ SL/TP автоматически</p>
     <p>✅ Cooldown защита от двойных входов</p>
@@ -258,7 +258,6 @@ def webhook():
     return jsonify({"s": "ok"}), 200
 
 def process_signal(d):
-    global active_positions, last_trade_time
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
