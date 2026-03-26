@@ -76,7 +76,7 @@ COOLDOWN_SECONDS = 4 * 60 * 60  # 4 часа между сделками на о
 
 # Трейлинг стоп — безубыток
 BREAKEVEN_ENABLED       = True
-BREAKEVEN_TRIGGER_PCT   = 2.5   # при +2.5% переносим SL
+BREAKEVEN_TRIGGER_PCT   = 1.5   # при +1.5% переносим SL
 BREAKEVEN_OFFSET_PCT    = 0.5   # SL = цена входа + 0.5%
 BREAKEVEN_CHECK_INTERVAL = 30   # проверка каждые 30 сек
 
