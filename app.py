@@ -76,9 +76,9 @@ COOLDOWN_SECONDS = 4 * 60 * 60  # 4 часа между сделками на о
 
 # Трейлинг стоп — безубыток
 BREAKEVEN_ENABLED       = True
-BREAKEVEN_TRIGGER_PCT   = 1.5   # при +1.5% переносим SL
+BREAKEVEN_TRIGGER_PCT   = 2.5   # при +2.5% переносим SL
 BREAKEVEN_OFFSET_PCT    = 0.5   # SL = цена входа + 0.5%
-BREAKEVEN_CHECK_INTERVAL = 60   # проверка каждые 60 сек
+BREAKEVEN_CHECK_INTERVAL = 30   # проверка каждые 30 сек
 
 # Словарь: symbol -> {"entry": float, "side": "BUY"/"SELL", "be_done": bool}
 active_positions = {}
@@ -243,7 +243,7 @@ threading.Thread(target=breakeven_monitor, daemon=True).start()
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v7</h1>
+    <h1>🚀 Elliott Wave Bot v8</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ SL/TP автоматически</p>
     <p>✅ Cooldown защита от двойных входов</p>
@@ -258,6 +258,7 @@ def webhook():
     return jsonify({"s": "ok"}), 200
 
 def process_signal(d):
+    global active_positions, last_trade_time
     
     tf = int(d.get("tf", 0))
     sym = d.get("symbol", "?")
