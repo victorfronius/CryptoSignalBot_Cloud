@@ -15,7 +15,7 @@ TELEGRAM_CHAT_ID = "5411759224"
 
 POSITION_SIZE_USDT = 5
 LEVERAGE = 10
-ALLOWED_TIMEFRAMES = [240]
+ALLOWED_TIMEFRAMES = [15, 60]
 
 BTC_FILTER_ENABLED = False
 BTC_EMA_PERIOD = 20
@@ -342,7 +342,7 @@ threading.Thread(target=breakeven_monitor, daemon=True).start()
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v9</h1>
+    <h1>🚀 Elliott Wave Bot v10</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ SL/TP автоматически</p>
     <p>✅ Cooldown защита от двойных входов</p>
@@ -364,11 +364,16 @@ def process_signal(d):
     sym = d.get("symbol", "?")
     dir = d.get("action", "").upper()
 
-    # ── EXIT сигнал — закрыть позицию и открыть обратную ──
+    # ── EXIT сигнал — закрыть позицию (если есть) и открыть обратную ──
     if dir in ("EXIT_LONG", "EXIT_SHORT"):
         if sym not in SYMBOL_MAP:
+            tg(f"❌ EXIT: символ {sym} не найден в SYMBOL_MAP")
             return
         s = SYMBOL_MAP[sym]
+        new_side = "BUY" if dir == "EXIT_LONG" else "SELL"
+        tg(f"📩 EXIT получен: {s} | {dir} | новая сторона: {new_side}")
+
+        # Закрываем существующую позицию если есть
         pos = bx("GET", "/openApi/swap/v2/user/positions", {})
         if pos.get("code") == 0:
             for p in pos.get("data", []):
@@ -385,18 +390,15 @@ def process_signal(d):
                             "reduceOnly": "true"
                         })
                         if result.get("code") == 0:
-                            tg(f"🚨 EXIT {s}\nРазворот на 5m — позиция закрыта\n{dir} | {abs(amt)} контрактов")
+                            tg(f"🚨 EXIT {s}\nПозиция закрыта | {abs(amt)} контрактов")
                             last_trade_time[s] = 0
                             active_positions.pop(s, None)
-
-                            # Открываем обратную позицию
-                            # EXIT_LONG = бычья свеча = разворот вверх → открываем LONG
-                            # EXIT_SHORT = медвежья свеча = разворот вниз → открываем SHORT
-                            new_side = "BUY" if dir == "EXIT_LONG" else "SELL"
                             time.sleep(1)
-                            open_reverse_position(s, new_side)
                         else:
-                            tg(f"❌ EXIT {s} ошибка: {result.get('msg')}")
+                            tg(f"❌ EXIT закрытие {s}: {result.get('msg')}")
+
+        # Открываем обратную позицию всегда
+        open_reverse_position(s, new_side)
         return
 
     sig = d.get("signal", "?")
@@ -545,6 +547,3 @@ def process_signal(d):
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-     
-
-    
