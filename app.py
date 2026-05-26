@@ -7,271 +7,409 @@ import threading
 
 app = Flask(__name__)
 
-BINGX_API_KEY = "BMWtI97RFrKmpBEQoOvcxWA6oeL60gnWqrUqSeDNbALuBgmlyYw4KfYFfBfSqNptKN0U5jhOO4gQvOs0qiPA"
+BINGX_API_KEY    = "BMWtI97RFrKmpBEQoOvcxWA6oeL60gnWqrUqSeDNbALuBgmlyYw4KfYFfBfSqNptKN0U5jhOO4gQvOs0qiPA"
 BINGX_SECRET_KEY = "qvkjbJn2yIGHaTXvfUu9a9o01UgC2S88xaDhkO2buJVdDik25ovPyzkQwCZ6O9Je6h7mKF5nBnM97YVgfvUQ"
-BINGX_BASE_URL = "https://open-api.bingx.com"
+BINGX_BASE_URL   = "https://open-api.bingx.com"
 TELEGRAM_BOT_TOKEN = "8003707312:AAEzu1tqQu-y3PGU6tqyDTKA0HJOfvOsu-E"
-TELEGRAM_CHAT_ID = "5411759224"
+TELEGRAM_CHAT_ID   = "5411759224"
 
 POSITION_SIZE_USDT = 5
-LEVERAGE = 20
+LEVERAGE           = 20
 ALLOWED_TIMEFRAMES = [240]
 
-BTC_FILTER_ENABLED = False
-BTC_EMA_PERIOD = 20
-BTC_DEVIATION_THRESHOLD = 0.2
-BTC_NEUTRAL_ALLOW_TRADING = False
+# ── EXIT разворот
+EXIT_REVERSE_SL_PCT = 1.5
+EXIT_REVERSE_TP_PCT = 2.5
 
-VOLUME_TRAILING_ENABLED = False
-EXIT_VOLUME_THRESHOLD = 0.2
-VOLUME_CHECK_INTERVAL = 180
-VOLUME_LOW_CONFIRMATIONS = 5
-MIN_TIME_IN_POSITION = 30
+# ── Безубыток
+BREAKEVEN_ENABLED        = True
+BREAKEVEN_TRIGGER_PCT    = 1.0
+BREAKEVEN_OFFSET_PCT     = 0.5
+BREAKEVEN_CHECK_INTERVAL = 30
 
-# EXIT разворот — фиксированные SL/TP для новой позиции
-EXIT_REVERSE_SL_PCT = 1.5   # SL = 1.5% от цены входа
-EXIT_REVERSE_TP_PCT = 2.5   # TP = 2.5% от цены входа
+# ── Cooldown
+COOLDOWN_SECONDS = 4 * 60 * 60
 
+# ── LIMIT ордера (НОВОЕ v11)
+# Лимитный ордер TTL — через сколько секунд отменять если не исполнен
+LIMIT_ORDER_TTL   = 4 * 60 * 60   # 4 часа
+# Минимальное расстояние limit_price от текущей цены (%, иначе лучше маркет)
+LIMIT_MIN_DIST_PCT = 0.1
+
+# ──────────────────────────────────────────────────────────────
 SYMBOL_MAP = {
-    "BTCUSDT": "BTC-USDT", "BTCUSDT.P": "BTC-USDT", "ETHUSDT": "ETH-USDT", "ETHUSDT.P": "ETH-USDT",
-    "BNBUSDT": "BNB-USDT", "BNBUSDT.P": "BNB-USDT", "SOLUSDT": "SOL-USDT", "SOLUSDT.P": "SOL-USDT",
-    "XRPUSDT": "XRP-USDT", "XRPUSDT.P": "XRP-USDT", "ADAUSDT": "ADA-USDT", "ADAUSDT.P": "ADA-USDT",
-    "DOGEUSDT": "DOGE-USDT", "DOGEUSDT.P": "DOGE-USDT", "AVAXUSDT": "AVAX-USDT", "AVAXUSDT.P": "AVAX-USDT",
-    "MATICUSDT": "MATIC-USDT", "MATICUSDT.P": "MATIC-USDT", "DOTUSDT": "DOT-USDT", "DOTUSDT.P": "DOT-USDT",
-    "TRXUSDT": "TRX-USDT", "TRXUSDT.P": "TRX-USDT", "LINKUSDT": "LINK-USDT", "LINKUSDT.P": "LINK-USDT",
-    "ARBUSDT": "ARB-USDT", "ARBUSDT.P": "ARB-USDT", "PEPEUSDT": "PEPE-USDT", "PEPEUSDT.P": "PEPE-USDT",
-    "SHIBUSDT": "SHIB-USDT", "SHIBUSDT.P": "SHIB-USDT", "FLOKIUSDT": "FLOKI-USDT", "FLOKIUSDT.P": "FLOKI-USDT",
-    "FTMUSDT": "FTM-USDT", "FTMUSDT.P": "FTM-USDT", "NEARUSDT": "NEAR-USDT", "NEARUSDT.P": "NEAR-USDT",
-    "ATOMUSDT": "ATOM-USDT", "ATOMUSDT.P": "ATOM-USDT", "OPUSDT": "OP-USDT", "OPUSDT.P": "OP-USDT",
-    "APTUSDT": "APT-USDT", "APTUSDT.P": "APT-USDT", "IMXUSDT": "IMX-USDT", "IMXUSDT.P": "IMX-USDT",
-    "LDOUSDT": "LDO-USDT", "LDOUSDT.P": "LDO-USDT", "WLDUSDT": "WLD-USDT", "WLDUSDT.P": "WLD-USDT",
-    "INJUSDT": "INJ-USDT", "INJUSDT.P": "INJ-USDT", "SUIUSDT": "SUI-USDT", "SUIUSDT.P": "SUI-USDT",
+    "BTCUSDT":    "BTC-USDT",  "BTCUSDT.P":   "BTC-USDT",
+    "ETHUSDT":    "ETH-USDT",  "ETHUSDT.P":   "ETH-USDT",
+    "BNBUSDT":    "BNB-USDT",  "BNBUSDT.P":   "BNB-USDT",
+    "SOLUSDT":    "SOL-USDT",  "SOLUSDT.P":   "SOL-USDT",
+    "XRPUSDT":    "XRP-USDT",  "XRPUSDT.P":   "XRP-USDT",
+    "ADAUSDT":    "ADA-USDT",  "ADAUSDT.P":   "ADA-USDT",
+    "DOGEUSDT":   "DOGE-USDT", "DOGEUSDT.P":  "DOGE-USDT",
+    "AVAXUSDT":   "AVAX-USDT", "AVAXUSDT.P":  "AVAX-USDT",
+    "MATICUSDT":  "MATIC-USDT","MATICUSDT.P": "MATIC-USDT",
+    "DOTUSDT":    "DOT-USDT",  "DOTUSDT.P":   "DOT-USDT",
+    "TRXUSDT":    "TRX-USDT",  "TRXUSDT.P":   "TRX-USDT",
+    "LINKUSDT":   "LINK-USDT", "LINKUSDT.P":  "LINK-USDT",
+    "ARBUSDT":    "ARB-USDT",  "ARBUSDT.P":   "ARB-USDT",
+    "PEPEUSDT":   "PEPE-USDT", "PEPEUSDT.P":  "PEPE-USDT",
+    "SHIBUSDT":   "SHIB-USDT", "SHIBUSDT.P":  "SHIB-USDT",
+    "FLOKIUSDT":  "FLOKI-USDT","FLOKIUSDT.P": "FLOKI-USDT",
+    "FTMUSDT":    "FTM-USDT",  "FTMUSDT.P":   "FTM-USDT",
+    "NEARUSDT":   "NEAR-USDT", "NEARUSDT.P":  "NEAR-USDT",
+    "ATOMUSDT":   "ATOM-USDT", "ATOMUSDT.P":  "ATOM-USDT",
+    "OPUSDT":     "OP-USDT",   "OPUSDT.P":    "OP-USDT",
+    "APTUSDT":    "APT-USDT",  "APTUSDT.P":   "APT-USDT",
+    "IMXUSDT":    "IMX-USDT",  "IMXUSDT.P":   "IMX-USDT",
+    "LDOUSDT":    "LDO-USDT",  "LDOUSDT.P":   "LDO-USDT",
+    "WLDUSDT":    "WLD-USDT",  "WLDUSDT.P":   "WLD-USDT",
+    "INJUSDT":    "INJ-USDT",  "INJUSDT.P":   "INJ-USDT",
+    "SUIUSDT":    "SUI-USDT",  "SUIUSDT.P":   "SUI-USDT",
 }
 
 MIN_QTY = {
-    "BTC-USDT": 0.001, "ETH-USDT": 0.01, "BNB-USDT": 0.01, "SOL-USDT": 0.1, "XRP-USDT": 1, "ADA-USDT": 1,
-    "DOGE-USDT": 1, "AVAX-USDT": 0.1, "MATIC-USDT": 1, "DOT-USDT": 0.1, "TRX-USDT": 1, "LINK-USDT": 0.1,
-    "ARB-USDT": 1, "PEPE-USDT": 100000, "SHIB-USDT": 100000, "FLOKI-USDT": 10000, "FTM-USDT": 1, "NEAR-USDT": 1,
-    "ATOM-USDT": 1, "OP-USDT": 1, "APT-USDT": 0.1, "IMX-USDT": 1, "LDO-USDT": 1, "WLD-USDT": 1,
-    "INJ-USDT": 0.1, "SUI-USDT": 1,
+    "BTC-USDT": 0.001, "ETH-USDT": 0.01,  "BNB-USDT": 0.01,
+    "SOL-USDT": 0.1,   "XRP-USDT": 1,     "ADA-USDT": 1,
+    "DOGE-USDT": 1,    "AVAX-USDT": 0.1,  "MATIC-USDT": 1,
+    "DOT-USDT": 0.1,   "TRX-USDT": 1,     "LINK-USDT": 0.1,
+    "ARB-USDT": 1,     "PEPE-USDT": 100000,"SHIB-USDT": 100000,
+    "FLOKI-USDT": 10000,"FTM-USDT": 1,    "NEAR-USDT": 1,
+    "ATOM-USDT": 1,    "OP-USDT": 1,      "APT-USDT": 0.1,
+    "IMX-USDT": 1,     "LDO-USDT": 1,     "WLD-USDT": 1,
+    "INJ-USDT": 0.1,   "SUI-USDT": 1,
 }
 
 QTY_PREC = {
-    "BTC-USDT": 3, "ETH-USDT": 2, "BNB-USDT": 2, "SOL-USDT": 2, "XRP-USDT": 0, "ADA-USDT": 0,
-    "DOGE-USDT": 0, "AVAX-USDT": 2, "MATIC-USDT": 0, "DOT-USDT": 2, "TRX-USDT": 0, "LINK-USDT": 2,
-    "ARB-USDT": 0, "PEPE-USDT": 0, "SHIB-USDT": 0, "FLOKI-USDT": 0, "FTM-USDT": 0, "NEAR-USDT": 1,
-    "ATOM-USDT": 1, "OP-USDT": 0, "APT-USDT": 2, "IMX-USDT": 0, "LDO-USDT": 0, "WLD-USDT": 0,
-    "INJ-USDT": 2, "SUI-USDT": 0,
+    "BTC-USDT": 3,  "ETH-USDT": 2,  "BNB-USDT": 2,
+    "SOL-USDT": 2,  "XRP-USDT": 0,  "ADA-USDT": 0,
+    "DOGE-USDT": 0, "AVAX-USDT": 2, "MATIC-USDT": 0,
+    "DOT-USDT": 2,  "TRX-USDT": 0,  "LINK-USDT": 2,
+    "ARB-USDT": 0,  "PEPE-USDT": 0, "SHIB-USDT": 0,
+    "FLOKI-USDT": 0,"FTM-USDT": 0,  "NEAR-USDT": 1,
+    "ATOM-USDT": 1, "OP-USDT": 0,   "APT-USDT": 2,
+    "IMX-USDT": 0,  "LDO-USDT": 0,  "WLD-USDT": 0,
+    "INJ-USDT": 2,  "SUI-USDT": 0,
 }
 
 PRICE_PREC = {
-    "BTC-USDT": 1, "ETH-USDT": 2, "BNB-USDT": 2, "SOL-USDT": 2, "XRP-USDT": 4, "ADA-USDT": 4,
-    "DOGE-USDT": 5, "AVAX-USDT": 2, "MATIC-USDT": 4, "DOT-USDT": 3, "TRX-USDT": 5, "LINK-USDT": 3,
-    "ARB-USDT": 4, "PEPE-USDT": 10, "SHIB-USDT": 8, "FLOKI-USDT": 8, "FTM-USDT": 4, "NEAR-USDT": 3,
-    "ATOM-USDT": 3, "OP-USDT": 3, "APT-USDT": 3, "IMX-USDT": 4, "LDO-USDT": 3, "WLD-USDT": 4,
-    "INJ-USDT": 3, "SUI-USDT": 4,
+    "BTC-USDT": 1,  "ETH-USDT": 2,  "BNB-USDT": 2,
+    "SOL-USDT": 2,  "XRP-USDT": 4,  "ADA-USDT": 4,
+    "DOGE-USDT": 5, "AVAX-USDT": 2, "MATIC-USDT": 4,
+    "DOT-USDT": 3,  "TRX-USDT": 5,  "LINK-USDT": 3,
+    "ARB-USDT": 4,  "PEPE-USDT": 10,"SHIB-USDT": 8,
+    "FLOKI-USDT": 8,"FTM-USDT": 4,  "NEAR-USDT": 3,
+    "ATOM-USDT": 3, "OP-USDT": 3,   "APT-USDT": 3,
+    "IMX-USDT": 4,  "LDO-USDT": 3,  "WLD-USDT": 4,
+    "INJ-USDT": 3,  "SUI-USDT": 4,
 }
 
-volume_monitor_threads = {}
+# ── Хранилище состояний
+last_trade_time    = {}
+active_positions   = {}
 
-last_trade_time = {}
-COOLDOWN_SECONDS = 4 * 60 * 60
+# ── Активные лимитные ордера (НОВОЕ v11)
+# symbol -> {"order_id": str, "side": "BUY"/"SELL", "qty": float,
+#            "limit_price": float, "sl": float, "tp1": float, "tp2": float,
+#            "signal": str, "placed_at": float}
+active_limit_orders = {}
 
-# Трейлинг стоп — безубыток
-BREAKEVEN_ENABLED        = True
-BREAKEVEN_TRIGGER_PCT    = 1.0   # при +1.0% переносим SL
-BREAKEVEN_OFFSET_PCT     = 0.5   # SL = цена входа + 0.5%
-BREAKEVEN_CHECK_INTERVAL = 30
-
-# symbol -> {"entry": float, "side": "BUY"/"SELL", "be_done": bool}
-active_positions = {}
-
+# ──────────────────────────────────────────────────────────────
+# УТИЛИТЫ
+# ──────────────────────────────────────────────────────────────
 
 def tg(msg):
     if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
         try:
-            requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                data={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=5)
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                data={"chat_id": TELEGRAM_CHAT_ID, "text": msg},
+                timeout=5
+            )
         except:
             pass
+
 
 def praseParam(p):
     s = sorted(p)
     return "&".join([f"{x}={p[x]}" for x in s]) + "&timestamp=" + str(p["timestamp"])
 
-def bx(m, e, p=None):
-    if not p:
-        p = {}
-    p["timestamp"] = int(time.time() * 1000)
-    p["recvWindow"] = 10000
-    pay = praseParam(p)
-    sig = hmac.new(BINGX_SECRET_KEY.encode(), pay.encode(), hashlib.sha256).hexdigest()
-    url = f"{BINGX_BASE_URL}{e}?{pay}&signature={sig}"
-    h = {"X-BX-APIKEY": BINGX_API_KEY}
+
+def bx(method, endpoint, params=None):
+    if not params:
+        params = {}
+    params["timestamp"] = int(time.time() * 1000)
+    params["recvWindow"] = 10000
+    payload = praseParam(params)
+    sig = hmac.new(BINGX_SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    url = f"{BINGX_BASE_URL}{endpoint}?{payload}&signature={sig}"
+    headers = {"X-BX-APIKEY": BINGX_API_KEY}
     try:
-        r = requests.get(url, headers=h, timeout=10) if m == "GET" else requests.post(url, headers=h, timeout=10)
+        if method == "GET":
+            r = requests.get(url, headers=headers, timeout=10)
+        elif method == "DELETE":
+            r = requests.delete(url, headers=headers, timeout=10)
+        else:
+            r = requests.post(url, headers=headers, timeout=10)
         return r.json()
     except:
         return {"code": -1}
+
 
 def format_price(price, symbol):
     prec = PRICE_PREC.get(symbol, 4)
     return round(float(price), prec)
 
-def get_btc_klines():
-    try:
-        url = f"{BINGX_BASE_URL}/openApi/swap/v2/quote/klines"
-        params = {"symbol": "BTC-USDT", "interval": "15m", "limit": 100}
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
-        if data.get("code") == 0 and data.get("data"):
-            return [float(k["close"]) for k in data["data"]]
-        return None
-    except:
-        return None
 
-def calculate_ema(prices, period=20):
-    if not prices or len(prices) < period:
-        return None
-    ema = prices[0]
-    multiplier = 2 / (period + 1)
-    for price in prices[1:]:
-        ema = (price - ema) * multiplier + ema
-    return ema
+def get_current_price(symbol):
+    """Возвращает текущую цену или None."""
+    pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": symbol})
+    if pr.get("code") == 0:
+        return float(pr["data"]["price"])
+    return None
 
-def get_btc_trend():
-    if not BTC_FILTER_ENABLED:
-        return "NEUTRAL"
-    closes = get_btc_klines()
-    if not closes:
-        return None
-    current_price = closes[-1]
-    ema = calculate_ema(closes, BTC_EMA_PERIOD)
-    if not ema:
-        return None
-    deviation = ((current_price - ema) / ema) * 100
-    if deviation > BTC_DEVIATION_THRESHOLD:
-        return "BULLISH"
-    elif deviation < -BTC_DEVIATION_THRESHOLD:
-        return "BEARISH"
-    else:
-        return "NEUTRAL"
 
-def is_position_open_check(symbol):
-    try:
-        pos = bx("GET", "/openApi/swap/v2/user/positions", {})
-        if pos.get("code") == 0:
-            for p in pos.get("data", []):
-                if p["symbol"] == symbol:
-                    amt = float(p.get("positionAmt", 0))
-                    if amt != 0:
-                        return True, amt
-        return False, 0
-    except:
-        return False, 0
+# ──────────────────────────────────────────────────────────────
+# LIMIT ОРДЕР — основная функция (НОВОЕ v11)
+# ──────────────────────────────────────────────────────────────
 
-def open_reverse_position(s, new_side):
-    """Открывает обратную позицию с фиксированными SL/TP после EXIT."""
+def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=None, zone_lo=None):
+    """
+    Выставляет лимитный ордер на BingX.
+    s           — символ BingX (например "NEAR-USDT")
+    si          — "BUY" или "SELL"
+    limit_price — цена лимитного ордера
+    sl          — стоп-лосс
+    tp1, tp2    — тейк-профиты
+    signal_name — строка для Telegram ("LIMIT Bull W2" и т.д.)
+    zone_hi/lo  — для отображения в Telegram
+    """
     prec = PRICE_PREC.get(s, 4)
 
-    # Получаем текущую цену
-    pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
-    if pr.get("code") != 0:
-        tg(f"❌ EXIT разворот {s}: цена недоступна")
+    # Проверяем текущую цену — лимит должен быть ниже рынка (LONG) или выше (SHORT)
+    cur_price = get_current_price(s)
+    if cur_price is None:
+        tg(f"❌ LIMIT {s}: текущая цена недоступна")
         return
-    price = float(pr["data"]["price"])
 
-    qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
+    # Если цена уже прошла зону — смысла в лимите нет
+    if si == "BUY" and limit_price >= cur_price * (1 - LIMIT_MIN_DIST_PCT / 100):
+        tg(f"⚠️ LIMIT LONG {s}: цена {cur_price:.{prec}f} уже в зоне или выше лимита {limit_price:.{prec}f}\n"
+           f"Сигнал проигнорирован — зона перекрыта")
+        return
+    if si == "SELL" and limit_price <= cur_price * (1 + LIMIT_MIN_DIST_PCT / 100):
+        tg(f"⚠️ LIMIT SHORT {s}: цена {cur_price:.{prec}f} уже в зоне или ниже лимита {limit_price:.{prec}f}\n"
+           f"Сигнал проигнорирован — зона перекрыта")
+        return
+
+    # Проверяем cooldown
+    now = time.time()
+    if now - last_trade_time.get(s, 0) < COOLDOWN_SECONDS:
+        wait_min = int((COOLDOWN_SECONDS - (now - last_trade_time[s])) / 60)
+        tg(f"⏳ LIMIT cooldown {s}: ещё {wait_min} мин")
+        return
+
+    # Проверяем открытую позицию
+    pos = bx("GET", "/openApi/swap/v2/user/positions", {})
+    if pos.get("code") == 0:
+        for p in pos.get("data", []):
+            if p["symbol"] == s and abs(float(p.get("positionAmt", 0))) > 0:
+                tg(f"⚠️ LIMIT {s}: позиция уже открыта, лимит не ставим")
+                return
+
+    # Отменяем предыдущий лимитный ордер по этому символу если есть
+    if s in active_limit_orders:
+        old = active_limit_orders[s]
+        cancel = bx("DELETE", "/openApi/swap/v2/trade/order",
+                    {"symbol": s, "orderId": old["order_id"]})
+        if cancel.get("code") == 0:
+            tg(f"🔄 LIMIT {s}: старый ордер #{old['order_id']} отменён (новый сигнал)")
+        active_limit_orders.pop(s, None)
+
+    # Рассчитываем объём
+    qty = round((POSITION_SIZE_USDT * LEVERAGE) / limit_price, QTY_PREC.get(s, 2))
     if qty < MIN_QTY.get(s, 0.01):
-        tg(f"❌ EXIT разворот {s}: объём слишком мал")
+        tg(f"❌ LIMIT {s}: объём {qty} меньше минимума")
         return
 
-    # SL и TP фиксированные %
-    if new_side == "BUY":
-        sl = round(price * (1 - EXIT_REVERSE_SL_PCT / 100), prec)
-        tp = round(price * (1 + EXIT_REVERSE_TP_PCT / 100), prec)
-    else:
-        sl = round(price * (1 + EXIT_REVERSE_SL_PCT / 100), prec)
-        tp = round(price * (1 - EXIT_REVERSE_TP_PCT / 100), prec)
+    # Устанавливаем плечо
+    bx("POST", "/openApi/swap/v2/trade/leverage",
+       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
 
-    # Установка плеча
-    bx("POST", "/openApi/swap/v2/trade/leverage", {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
-
-    # Открытие позиции
+    # Выставляем лимитный ордер
     o = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s,
-        "side": new_side,
+        "symbol":       s,
+        "side":         si,
         "positionSide": "BOTH",
-        "type": "MARKET",
-        "quantity": str(qty)
+        "type":         "LIMIT",
+        "price":        str(limit_price),
+        "quantity":     str(qty),
+        "timeInForce":  "GTC"       # Good Till Cancel
     })
 
     if o.get("code") != 0:
-        tg(f"❌ EXIT разворот {s}: ошибка открытия {o.get('msg')}")
+        tg(f"❌ LIMIT {s} {si}: ошибка ордера — {o.get('msg')}")
         return
 
-    last_trade_time[s] = time.time()
-    active_positions[s] = {"entry": price, "side": new_side, "be_done": False}
+    order_id = str(o.get("data", {}).get("orderId", "?"))
 
-    time.sleep(1.5)
+    # Сохраняем состояние
+    active_limit_orders[s] = {
+        "order_id":    order_id,
+        "side":        si,
+        "qty":         qty,
+        "limit_price": limit_price,
+        "sl":          sl,
+        "tp1":         tp1,
+        "tp2":         tp2,
+        "signal":      signal_name,
+        "placed_at":   time.time()
+    }
 
-    # Получаем точный qty
-    actual_qty = qty
-    pos_check = bx("GET", "/openApi/swap/v2/user/positions", {})
-    if pos_check.get("code") == 0:
-        for p in pos_check.get("data", []):
+    dir_label = "LONG" if si == "BUY" else "SHORT"
+    zone_str  = f"Зона: {zone_lo:.{prec}f} – {zone_hi:.{prec}f}\n" if zone_hi and zone_lo else ""
+    tg(
+        f"📋 LIMIT {dir_label} выставлен\n"
+        f"Symbol: {s}\n"
+        f"Signal: {signal_name}\n"
+        f"Лимит: {limit_price:.{prec}f} | Текущая: {cur_price:.{prec}f}\n"
+        f"{zone_str}"
+        f"SL: {sl:.{prec}f}\n"
+        f"TP1: {tp1:.{prec}f} | TP2: {tp2:.{prec}f}\n"
+        f"Объём: {qty} × {LEVERAGE}x\n"
+        f"ID: #{order_id}"
+    )
+
+
+def attach_sl_tp_to_filled_limit(s):
+    """
+    Вызывается когда лимитный ордер исполнился.
+    Снимает данные из active_limit_orders и ставит SL + TP.
+    """
+    info = active_limit_orders.get(s)
+    if not info:
+        return
+
+    si       = info["side"]
+    sl       = info["sl"]
+    tp1      = info["tp1"]
+    tp2      = info["tp2"]
+    entry    = info["limit_price"]
+    prec     = PRICE_PREC.get(s, 4)
+
+    # Получаем фактический объём из позиции
+    actual_qty = info["qty"]
+    pos_data = bx("GET", "/openApi/swap/v2/user/positions", {})
+    if pos_data.get("code") == 0:
+        for p in pos_data.get("data", []):
             if p["symbol"] == s:
-                actual_qty = abs(float(p.get("positionAmt", qty)))
+                actual_qty = abs(float(p.get("positionAmt", info["qty"])))
                 break
 
-    close_side = "SELL" if new_side == "BUY" else "BUY"
+    close_side = "SELL" if si == "BUY" else "BUY"
 
     sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s,
-        "side": close_side,
+        "symbol":       s,
+        "side":         close_side,
         "positionSide": "BOTH",
-        "type": "STOP_MARKET",
-        "stopPrice": str(sl),
-        "quantity": str(actual_qty),
-        "reduceOnly": "true",
-        "workingType": "MARK_PRICE"
+        "type":         "STOP_MARKET",
+        "stopPrice":    str(sl),
+        "quantity":     str(actual_qty),
+        "reduceOnly":   "true",
+        "workingType":  "MARK_PRICE"
     })
 
     tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s,
-        "side": close_side,
+        "symbol":       s,
+        "side":         close_side,
         "positionSide": "BOTH",
-        "type": "TAKE_PROFIT_MARKET",
-        "stopPrice": str(tp),
-        "quantity": str(actual_qty),
-        "reduceOnly": "true",
-        "workingType": "MARK_PRICE"
+        "type":         "TAKE_PROFIT_MARKET",
+        "stopPrice":    str(tp1),
+        "quantity":     str(actual_qty),
+        "reduceOnly":   "true",
+        "workingType":  "MARK_PRICE"
     })
 
     sl_ok = sl_order.get("code") == 0
     tp_ok = tp_order.get("code") == 0
 
-    dir_label = "LONG" if new_side == "BUY" else "SHORT"
+    last_trade_time[s]  = time.time()
+    active_positions[s] = {"entry": entry, "side": si, "be_done": False}
+    active_limit_orders.pop(s, None)
+
+    dir_label = "LONG" if si == "BUY" else "SHORT"
     if sl_ok and tp_ok:
-        tg(f"🔄 EXIT → Разворот {s} {dir_label}\n"
-           f"Вход: {price:.{prec}f}\n"
-           f"SL: {sl:.{prec}f} | TP: {tp:.{prec}f}\n"
-           f"💎 {actual_qty} × {LEVERAGE}x")
+        tg(
+            f"✅ LIMIT исполнен → {s} {dir_label}\n"
+            f"Вход: {entry:.{prec}f}\n"
+            f"SL: {sl:.{prec}f} | TP: {tp1:.{prec}f}\n"
+            f"Объём: {actual_qty} × {LEVERAGE}x"
+        )
     else:
-        parts = [f"🔄 EXIT → Разворот {s} {dir_label} открыт"]
-        if not sl_ok:
-            parts.append(f"❌ SL: {sl_order.get('msg')}")
-        else:
-            parts.append(f"✅ SL: {sl:.{prec}f}")
-        if not tp_ok:
-            parts.append(f"❌ TP: {tp_order.get('msg')}")
-        else:
-            parts.append(f"✅ TP: {tp:.{prec}f}")
+        parts = [f"✅ LIMIT исполнен → {s} {dir_label}"]
+        parts.append(f"SL: {'✅ ' + str(sl) if sl_ok else '❌ ' + sl_order.get('msg','')}")
+        parts.append(f"TP: {'✅ ' + str(tp1) if tp_ok else '❌ ' + tp_order.get('msg','')}")
         tg("\n".join(parts))
 
 
+# ──────────────────────────────────────────────────────────────
+# МОНИТОРИНГ ЛИМИТНЫХ ОРДЕРОВ — фоновый поток (НОВОЕ v11)
+# ──────────────────────────────────────────────────────────────
+
+def limit_order_monitor():
+    """
+    Каждые 60 сек проверяет статус лимитных ордеров.
+    — Если исполнен (FILLED) → вызывает attach_sl_tp_to_filled_limit
+    — Если истёк TTL → отменяет
+    """
+    while True:
+        try:
+            for s, info in list(active_limit_orders.items()):
+                try:
+                    # Проверяем TTL
+                    age = time.time() - info["placed_at"]
+                    if age > LIMIT_ORDER_TTL:
+                        cancel = bx("DELETE", "/openApi/swap/v2/trade/order",
+                                    {"symbol": s, "orderId": info["order_id"]})
+                        prec = PRICE_PREC.get(s, 4)
+                        if cancel.get("code") == 0:
+                            tg(f"⏰ LIMIT {s} #{info['order_id']} истёк TTL ({LIMIT_ORDER_TTL//3600}ч) → отменён\n"
+                               f"Цена лимита была: {info['limit_price']:.{prec}f}")
+                        active_limit_orders.pop(s, None)
+                        continue
+
+                    # Проверяем статус ордера
+                    order_status = bx("GET", "/openApi/swap/v2/trade/order",
+                                      {"symbol": s, "orderId": info["order_id"]})
+
+                    if order_status.get("code") != 0:
+                        continue
+
+                    status = order_status.get("data", {}).get("order", {}).get("status", "")
+
+                    if status == "FILLED":
+                        print(f"LIMIT FILLED: {s} #{info['order_id']}")
+                        attach_sl_tp_to_filled_limit(s)
+
+                    elif status in ("CANCELLED", "EXPIRED", "REJECTED"):
+                        tg(f"❌ LIMIT {s} #{info['order_id']} статус: {status}")
+                        active_limit_orders.pop(s, None)
+
+                except Exception as e:
+                    print(f"limit_order_monitor inner error {s}: {e}")
+
+        except Exception as e:
+            print(f"limit_order_monitor error: {e}")
+
+        time.sleep(60)
+
+
+threading.Thread(target=limit_order_monitor, daemon=True).start()
+
+
+# ──────────────────────────────────────────────────────────────
+# БЕЗУБЫТОК — фоновый поток
+# ──────────────────────────────────────────────────────────────
+
 def breakeven_monitor():
-    """Фоновый поток — переносит SL в безубыток при +1.5%"""
     while True:
         try:
             if BREAKEVEN_ENABLED and active_positions:
@@ -281,31 +419,27 @@ def breakeven_monitor():
                     entry = info["entry"]
                     side  = info["side"]
                     try:
-                        pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": sym})
-                        if pr.get("code") != 0:
-                            print(f"BE: не удалось получить цену {sym}")
-                            time.sleep(5)
+                        cur_price = get_current_price(sym)
+                        if cur_price is None:
                             continue
-                        cur_price = float(pr["data"]["price"])
-                        if side == "BUY":
-                            profit_pct = (cur_price - entry) / entry * 100
-                        else:
-                            profit_pct = (entry - cur_price) / entry * 100
-                        print(f"BE мониторинг {sym}: вход={entry}, цена={cur_price}, прибыль={profit_pct:.2f}%")
-                        time.sleep(1)
+                        profit_pct = ((cur_price - entry) / entry * 100) if side == "BUY" \
+                                     else ((entry - cur_price) / entry * 100)
+                        print(f"BE {sym}: вход={entry}, цена={cur_price}, P={profit_pct:.2f}%")
+
                         if profit_pct >= BREAKEVEN_TRIGGER_PCT:
-                            if side == "BUY":
-                                new_sl = round(entry * (1 + BREAKEVEN_OFFSET_PCT / 100), PRICE_PREC.get(sym, 4))
-                            else:
-                                new_sl = round(entry * (1 - BREAKEVEN_OFFSET_PCT / 100), PRICE_PREC.get(sym, 4))
+                            prec = PRICE_PREC.get(sym, 4)
+                            new_sl = round(entry * (1 + BREAKEVEN_OFFSET_PCT / 100), prec) if side == "BUY" \
+                                     else round(entry * (1 - BREAKEVEN_OFFSET_PCT / 100), prec)
+
+                            # Удаляем старый SL
                             orders = bx("GET", "/openApi/swap/v2/trade/openOrders", {"symbol": sym})
                             if orders.get("code") == 0:
                                 for o in orders.get("data", {}).get("orders", []):
                                     if o.get("type") in ("STOP_MARKET", "STOP") and o.get("reduceOnly"):
-                                        bx("DELETE", "/openApi/swap/v2/trade/order", {
-                                            "symbol": sym,
-                                            "orderId": o["orderId"]
-                                        })
+                                        bx("DELETE", "/openApi/swap/v2/trade/order",
+                                           {"symbol": sym, "orderId": o["orderId"]})
+
+                            # Ставим новый SL
                             pos_data = bx("GET", "/openApi/swap/v2/user/positions", {})
                             actual_qty = 0
                             if pos_data.get("code") == 0:
@@ -315,40 +449,118 @@ def breakeven_monitor():
                             if actual_qty > 0:
                                 close_side = "SELL" if side == "BUY" else "BUY"
                                 sl_result = bx("POST", "/openApi/swap/v2/trade/order", {
-                                    "symbol": sym,
-                                    "side": close_side,
+                                    "symbol":       sym,
+                                    "side":         close_side,
                                     "positionSide": "BOTH",
-                                    "type": "STOP_MARKET",
-                                    "stopPrice": str(new_sl),
-                                    "quantity": str(actual_qty),
-                                    "reduceOnly": "true",
-                                    "workingType": "MARK_PRICE"
+                                    "type":         "STOP_MARKET",
+                                    "stopPrice":    str(new_sl),
+                                    "quantity":     str(actual_qty),
+                                    "reduceOnly":   "true",
+                                    "workingType":  "MARK_PRICE"
                                 })
-                                print(f"BE SL ордер {sym}: {sl_result}")
                                 if sl_result.get("code") == 0:
                                     active_positions[sym]["be_done"] = True
-                                    tg(f"🔒 Безубыток {sym}\nПрибыль {profit_pct:.1f}% → SL перенесён на {new_sl}")
+                                    tg(f"🔒 Безубыток {sym}\nP={profit_pct:.1f}% → SL перенесён на {new_sl:.{prec}f}")
                                 else:
                                     print(f"BE SL ошибка {sym}: {sl_result.get('msg')}")
                     except Exception as e:
-                        print(f"Breakeven error {sym}: {e}")
+                        print(f"BE error {sym}: {e}")
         except Exception as e:
-            print(f"Breakeven monitor error: {e}")
+            print(f"BE monitor error: {e}")
         time.sleep(BREAKEVEN_CHECK_INTERVAL)
+
 
 threading.Thread(target=breakeven_monitor, daemon=True).start()
 
 
+# ──────────────────────────────────────────────────────────────
+# EXIT РАЗВОРОТ
+# ──────────────────────────────────────────────────────────────
+
+def open_reverse_position(s, new_side):
+    prec = PRICE_PREC.get(s, 4)
+    price = get_current_price(s)
+    if price is None:
+        tg(f"❌ EXIT разворот {s}: цена недоступна")
+        return
+
+    qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
+    if qty < MIN_QTY.get(s, 0.01):
+        tg(f"❌ EXIT разворот {s}: объём {qty} слишком мал")
+        return
+
+    sl = round(price * (1 - EXIT_REVERSE_SL_PCT / 100), prec) if new_side == "BUY" \
+         else round(price * (1 + EXIT_REVERSE_SL_PCT / 100), prec)
+    tp = round(price * (1 + EXIT_REVERSE_TP_PCT / 100), prec) if new_side == "BUY" \
+         else round(price * (1 - EXIT_REVERSE_TP_PCT / 100), prec)
+
+    bx("POST", "/openApi/swap/v2/trade/leverage",
+       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+
+    o = bx("POST", "/openApi/swap/v2/trade/order", {
+        "symbol":       s,
+        "side":         new_side,
+        "positionSide": "BOTH",
+        "type":         "MARKET",
+        "quantity":     str(qty)
+    })
+
+    if o.get("code") != 0:
+        tg(f"❌ EXIT разворот {s}: {o.get('msg')}")
+        return
+
+    last_trade_time[s]  = time.time()
+    active_positions[s] = {"entry": price, "side": new_side, "be_done": False}
+    time.sleep(1.5)
+
+    actual_qty = qty
+    pos_check = bx("GET", "/openApi/swap/v2/user/positions", {})
+    if pos_check.get("code") == 0:
+        for p in pos_check.get("data", []):
+            if p["symbol"] == s:
+                actual_qty = abs(float(p.get("positionAmt", qty)))
+                break
+
+    close_side = "SELL" if new_side == "BUY" else "BUY"
+    sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
+        "symbol": s, "side": close_side, "positionSide": "BOTH",
+        "type": "STOP_MARKET", "stopPrice": str(sl),
+        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
+    })
+    tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
+        "symbol": s, "side": close_side, "positionSide": "BOTH",
+        "type": "TAKE_PROFIT_MARKET", "stopPrice": str(tp),
+        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
+    })
+
+    dir_label = "LONG" if new_side == "BUY" else "SHORT"
+    sl_ok = sl_order.get("code") == 0
+    tp_ok = tp_order.get("code") == 0
+    if sl_ok and tp_ok:
+        tg(f"🔄 EXIT → {s} {dir_label}\nВход: {price:.{prec}f}\nSL: {sl:.{prec}f} | TP: {tp:.{prec}f}\n💎 {actual_qty} × {LEVERAGE}x")
+    else:
+        parts = [f"🔄 EXIT → {s} {dir_label} открыт"]
+        parts.append(f"{'✅' if sl_ok else '❌'} SL: {sl:.{prec}f}")
+        parts.append(f"{'✅' if tp_ok else '❌'} TP: {tp:.{prec}f}")
+        tg("\n".join(parts))
+
+
+# ──────────────────────────────────────────────────────────────
+# WEBHOOK
+# ──────────────────────────────────────────────────────────────
+
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v10</h1>
-    <p>💎 5 USDT × 10x</p>
-    <p>✅ SL/TP автоматически</p>
-    <p>✅ Cooldown защита от двойных входов</p>
-    <p>✅ Безубыток при +1.5%</p>
-    <p>✅ EXIT разворот с фиксированными SL/TP</p>
+    <h1>🚀 Elliott Wave Bot v11</h1>
+    <p>💎 5 USDT × 20x</p>
+    <p>✅ MARKET: W3/W5 сигналы</p>
+    <p>✅ LIMIT: W2/W4/RTM зоны</p>
+    <p>✅ Безубыток при +1.0%</p>
+    <p>✅ EXIT разворот</p>
+    <p>✅ Cooldown 4H</p>
     """
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -358,22 +570,23 @@ def webhook():
     threading.Thread(target=process_signal, args=(d,)).start()
     return jsonify({"s": "ok"}), 200
 
+
 def process_signal(d):
+    tf     = int(d.get("tf", 0))
+    sym    = d.get("symbol", "?")
+    action = d.get("action", "").upper()
+    signal = d.get("signal", "?")
+    order_type = d.get("order_type", "MARKET").upper()
 
-    tf = int(d.get("tf", 0))
-    sym = d.get("symbol", "?")
-    dir = d.get("action", "").upper()
-
-    # ── EXIT сигнал — закрыть позицию (если есть) и открыть обратную ──
-    if dir in ("EXIT_LONG", "EXIT_SHORT"):
+    # ── EXIT ──
+    if action in ("EXIT_LONG", "EXIT_SHORT"):
         if sym not in SYMBOL_MAP:
-            tg(f"❌ EXIT: символ {sym} не найден в SYMBOL_MAP")
+            tg(f"❌ EXIT: символ {sym} не в SYMBOL_MAP")
             return
         s = SYMBOL_MAP[sym]
-        new_side = "BUY" if dir == "EXIT_LONG" else "SELL"
-        tg(f"📩 EXIT получен: {s} | {dir} | новая сторона: {new_side}")
+        new_side = "BUY" if action == "EXIT_LONG" else "SELL"
+        tg(f"📩 EXIT: {s} | {action}")
 
-        # Закрываем существующую позицию если есть
         pos = bx("GET", "/openApi/swap/v2/user/positions", {})
         if pos.get("code") == 0:
             for p in pos.get("data", []):
@@ -382,41 +595,52 @@ def process_signal(d):
                     if amt != 0:
                         close_side = "SELL" if amt > 0 else "BUY"
                         result = bx("POST", "/openApi/swap/v2/trade/order", {
-                            "symbol": s,
-                            "side": close_side,
-                            "positionSide": "BOTH",
-                            "type": "MARKET",
-                            "quantity": str(abs(amt)),
-                            "reduceOnly": "true"
+                            "symbol": s, "side": close_side,
+                            "positionSide": "BOTH", "type": "MARKET",
+                            "quantity": str(abs(amt)), "reduceOnly": "true"
                         })
                         if result.get("code") == 0:
-                            tg(f"🚨 EXIT {s}\nПозиция закрыта | {abs(amt)} контрактов")
+                            tg(f"🚨 EXIT {s}: закрыта {abs(amt)} контрактов")
                             last_trade_time[s] = 0
                             active_positions.pop(s, None)
                             time.sleep(1)
                         else:
                             tg(f"❌ EXIT закрытие {s}: {result.get('msg')}")
-
-        # Открываем обратную позицию всегда
         open_reverse_position(s, new_side)
         return
 
-    sig = d.get("signal", "?")
-    sl_raw = d.get("sl", "na")
-    tp_raw = d.get("tp1", d.get("tp", "na"))
-
-    m = f"🚨 {sig}\n{sym} {dir} {tf}m\n"
+    # ── Базовые проверки ──
+    m = f"🚨 {signal}\n{sym} {action} {tf}m\n"
 
     if tf not in ALLOWED_TIMEFRAMES:
         tg(m + "❌ Неверный таймфрейм")
         return
-
     if sym not in SYMBOL_MAP:
         tg(m + "❌ Неизвестная пара")
         return
 
-    s = SYMBOL_MAP[sym]
-    si = "BUY" if dir == "LONG" else "SELL"
+    s  = SYMBOL_MAP[sym]
+    si = "BUY" if action == "LONG" else "SELL"
+
+    # ── LIMIT ОРДЕР (НОВОЕ v11) ──
+    if order_type == "LIMIT":
+        try:
+            limit_price = format_price(d.get("limit_price", d.get("zone_lo") if si == "BUY" else d.get("zone_hi")), s)
+            sl  = format_price(d["sl"],  s)
+            tp1 = format_price(d["tp1"], s)
+            tp2 = format_price(d.get("tp2", d["tp1"]), s)
+            zone_hi = float(d["zone_hi"]) if "zone_hi" in d else None
+            zone_lo = float(d["zone_lo"]) if "zone_lo" in d else None
+        except (KeyError, TypeError, ValueError) as e:
+            tg(m + f"❌ LIMIT: некорректные параметры — {e}")
+            return
+
+        place_limit_order(s, si, limit_price, sl, tp1, tp2, signal, zone_hi, zone_lo)
+        return
+
+    # ── MARKET ОРДЕР (стандартная логика из v10) ──
+    sl_raw  = d.get("sl", "na")
+    tp_raw  = d.get("tp1", d.get("tp", "na"))
 
     if sl_raw == "na" or tp_raw == "na":
         tg(m + "⚠️ Нет SL/TP — пропускаем")
@@ -426,24 +650,19 @@ def process_signal(d):
         sl = format_price(sl_raw, s)
         tp = format_price(tp_raw, s)
 
-        print(f"DEBUG: dir={dir}, sl={sl}, tp={tp}")
-
         pr_check = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
         if pr_check.get("code") == 0:
             cur_price = float(pr_check["data"]["price"])
-            min_dist = cur_price * 0.01
-            if dir == "LONG" and (tp - cur_price) < min_dist:
+            min_dist  = cur_price * 0.01
+            if action == "LONG" and (tp - cur_price) < min_dist:
                 tp = format_price(cur_price * 1.01, s)
-                print(f"DEBUG TP adjusted LONG: {tp}")
-            elif dir == "SHORT" and (cur_price - tp) < min_dist:
+            elif action == "SHORT" and (cur_price - tp) < min_dist:
                 tp = format_price(cur_price * 0.99, s)
-                print(f"DEBUG TP adjusted SHORT: {tp}")
-
     except:
         tg(m + "❌ Некорректные SL/TP")
         return
 
-    now = time.time()
+    now  = time.time()
     last = last_trade_time.get(s, 0)
     if now - last < COOLDOWN_SECONDS:
         wait_min = int((COOLDOWN_SECONDS - (now - last)) / 60)
@@ -453,44 +672,39 @@ def process_signal(d):
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
     if pos.get("code") == 0:
         for p in pos.get("data", []):
-            if p["symbol"] == s:
-                amt = float(p.get("positionAmt", 0))
-                if amt != 0:
-                    tg(m + f"⚠️ Позиция уже есть: {amt}")
-                    return
+            if p["symbol"] == s and abs(float(p.get("positionAmt", 0))) > 0:
+                tg(m + f"⚠️ Позиция уже есть")
+                return
 
-    pr = bx("GET", "/openApi/swap/v2/quote/price", {"symbol": s})
-    if pr.get("code") != 0:
+    price = get_current_price(s)
+    if price is None:
         tg(m + "❌ Цена недоступна")
         return
 
-    price = float(pr["data"]["price"])
     qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
-
     if qty < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Объём слишком мал: {qty}")
         return
 
     tg(m + f"💼 {s} {qty}\nSL: {sl} | TP: {tp}")
 
-    bx("POST", "/openApi/swap/v2/trade/leverage", {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+    bx("POST", "/openApi/swap/v2/trade/leverage",
+       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
 
     o = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s,
-        "side": si,
+        "symbol":       s,
+        "side":         si,
         "positionSide": "BOTH",
-        "type": "MARKET",
-        "quantity": str(qty)
+        "type":         "MARKET",
+        "quantity":     str(qty)
     })
 
     if o.get("code") != 0:
         tg(f"❌ Ошибка открытия: {o.get('msg')}")
         return
 
-    last_trade_time[s] = time.time()
+    last_trade_time[s]  = time.time()
     active_positions[s] = {"entry": price, "side": si, "be_done": False}
-    print(f"BE: позиция сохранена {s}, вход={price}, side={si}")
-
     time.sleep(1.5)
 
     actual_qty = qty
@@ -502,47 +716,29 @@ def process_signal(d):
                 break
 
     close_side = "SELL" if si == "BUY" else "BUY"
+    prec = PRICE_PREC.get(s, 4)
 
     sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s,
-        "side": close_side,
-        "positionSide": "BOTH",
-        "type": "STOP_MARKET",
-        "stopPrice": str(sl),
-        "quantity": str(actual_qty),
-        "reduceOnly": "true",
-        "workingType": "MARK_PRICE"
+        "symbol": s, "side": close_side, "positionSide": "BOTH",
+        "type": "STOP_MARKET", "stopPrice": str(sl),
+        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
     })
-
     tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s,
-        "side": close_side,
-        "positionSide": "BOTH",
-        "type": "TAKE_PROFIT_MARKET",
-        "stopPrice": str(tp),
-        "quantity": str(actual_qty),
-        "reduceOnly": "true",
-        "workingType": "MARK_PRICE"
+        "symbol": s, "side": close_side, "positionSide": "BOTH",
+        "type": "TAKE_PROFIT_MARKET", "stopPrice": str(tp),
+        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
     })
 
     sl_ok = sl_order.get("code") == 0
     tp_ok = tp_order.get("code") == 0
 
-    price_prec = PRICE_PREC.get(s, 4)
-
     if sl_ok and tp_ok:
-        tg(f"✅ {s} {si} открыта!\n📊 SL: {sl:.{price_prec}f} | TP: {tp:.{price_prec}f}\n💎 {actual_qty} × {LEVERAGE}x")
+        tg(f"✅ {s} {si} открыта!\nSL: {sl:.{prec}f} | TP: {tp:.{prec}f}\n💎 {actual_qty} × {LEVERAGE}x")
     else:
-        msg_parts = [f"✅ {s} {si} открыта!"]
-        if not sl_ok:
-            msg_parts.append(f"❌ SL: {sl_order.get('msg')}")
-        else:
-            msg_parts.append(f"✅ SL: {sl:.{price_prec}f}")
-        if not tp_ok:
-            msg_parts.append(f"❌ TP: {tp_order.get('msg')}")
-        else:
-            msg_parts.append(f"✅ TP: {tp:.{price_prec}f}")
-        tg("\n".join(msg_parts))
+        parts = [f"✅ {s} {si} открыта!"]
+        parts.append(f"{'✅' if sl_ok else '❌'} SL: {sl:.{prec}f}")
+        parts.append(f"{'✅' if tp_ok else '❌'} TP: {tp:.{prec}f}")
+        tg("\n".join(parts))
 
 
 if __name__ == "__main__":
