@@ -624,11 +624,39 @@ def process_signal(d):
 
     # ── LIMIT ОРДЕР (НОВОЕ v11) ──
     if order_type == "LIMIT":
-        try:
-            limit_price = format_price(d.get("limit_price", d.get("zone_lo") if si == "BUY" else d.get("zone_hi")), s)
-            sl  = format_price(d["sl"],  s)
-            tp1 = format_price(d["tp1"], s)
-            tp2 = format_price(d.get("tp2", d["tp1"]), s)
+    
+
+
+        
+           try:
+    limit_price = format_price(
+        d.get("limit_price",
+              d.get("zone_lo") if si == "BUY" else d.get("zone_hi")), s)
+    sl  = format_price(d["sl"], s)
+
+    RTM_TP1_PCT = 2.0
+    RTM_TP2_PCT = 3.5
+
+    raw_tp1 = d.get("tp1", 0)
+    raw_tp2 = d.get("tp2", 0)
+
+    if raw_tp1:
+        tp1 = format_price(raw_tp1, s)
+        tp2 = format_price(raw_tp2 if raw_tp2 else raw_tp1, s)
+    else:
+        # RTM — нет tp1 в алерте, считаем по %
+        if si == "BUY":
+            tp1 = format_price(limit_price * (1 + RTM_TP1_PCT / 100), s)
+            tp2 = format_price(limit_price * (1 + RTM_TP2_PCT / 100), s)
+        else:
+            tp1 = format_price(limit_price * (1 - RTM_TP1_PCT / 100), s)
+            tp2 = format_price(limit_price * (1 - RTM_TP2_PCT / 100), s)
+
+    zone_hi = float(d["zone_hi"]) if "zone_hi" in d else None
+    zone_lo = float(d["zone_lo"]) if "zone_lo" in d else None
+except (KeyError, TypeError, ValueError) as e:
+    tg(m + f"❌ LIMIT: некорректные параметры — {e}")
+    return
             zone_hi = float(d["zone_hi"]) if "zone_hi" in d else None
             zone_lo = float(d["zone_lo"]) if "zone_lo" in d else None
         except (KeyError, TypeError, ValueError) as e:
