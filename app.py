@@ -14,7 +14,7 @@ TELEGRAM_BOT_TOKEN = "8003707312:AAEzu1tqQu-y3PGU6tqyDTKA0HJOfvOsu-E"
 TELEGRAM_CHAT_ID   = "5411759224"
 
 POSITION_SIZE_USDT = 5
-LEVERAGE           = 20
+LEVERAGE           = 10
 ALLOWED_TIMEFRAMES = [240]
 
 # ── EXIT разворот
@@ -190,15 +190,25 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         tg(f"❌ LIMIT {s}: текущая цена недоступна")
         return
 
-    # Если цена уже прошла зону — смысла в лимите нет
-    if si == "BUY" and limit_price >= cur_price * (1 - LIMIT_MIN_DIST_PCT / 100):
-        tg(f"⚠️ LIMIT LONG {s}: цена {cur_price:.{prec}f} уже в зоне или выше лимита {limit_price:.{prec}f}\n"
-           f"Сигнал проигнорирован — зона перекрыта")
-        return
-    if si == "SELL" and limit_price <= cur_price * (1 + LIMIT_MIN_DIST_PCT / 100):
-        tg(f"⚠️ LIMIT SHORT {s}: цена {cur_price:.{prec}f} уже в зоне или ниже лимита {limit_price:.{prec}f}\n"
-           f"Сигнал проигнорирован — зона перекрыта")
-        return
+    # LONG: лимит должен быть НИЖЕ текущей цены на 0.1%–8% (ждём откат вниз)
+    # SHORT: лимит должен быть ВЫШЕ текущей цены на 0.1%–8% (ждём откат вверх)
+    MAX_DIST_PCT = 8.0
+    if si == "BUY":
+        dist = (cur_price - limit_price) / cur_price * 100
+        if dist < LIMIT_MIN_DIST_PCT:
+            tg(f"⚠️ LIMIT LONG {s}: лимит {limit_price:.{prec}f} слишком близко к цене {cur_price:.{prec}f} ({dist:.1f}%) — пропускаем")
+            return
+        if dist > MAX_DIST_PCT:
+            tg(f"⚠️ LIMIT LONG {s}: лимит {limit_price:.{prec}f} слишком далеко от цены {cur_price:.{prec}f} ({dist:.1f}%) — пропускаем")
+            return
+    if si == "SELL":
+        dist = (limit_price - cur_price) / cur_price * 100
+        if dist < LIMIT_MIN_DIST_PCT:
+            tg(f"⚠️ LIMIT SHORT {s}: лимит {limit_price:.{prec}f} слишком близко к цене {cur_price:.{prec}f} ({dist:.1f}%) — пропускаем")
+            return
+        if dist > MAX_DIST_PCT:
+            tg(f"⚠️ LIMIT SHORT {s}: лимит {limit_price:.{prec}f} слишком далеко от цены {cur_price:.{prec}f} ({dist:.1f}%) — пропускаем")
+            return
 
     # Проверяем cooldown
     now = time.time()
@@ -552,7 +562,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v11</h1>
+    <h1>🚀 Elliott Wave Bot v13</h1>
     <p>💎 5 USDT × 20x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
