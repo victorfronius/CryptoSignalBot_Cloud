@@ -236,7 +236,14 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         tg(f"❌ LIMIT {s} {si}: ошибка — {o.get('msg')} | code={o.get('code')}")
         return
 
-    order_id = str(o.get("data", {}).get("orderId", "?"))
+    # BingX может возвращать orderId в разных полях
+    data = o.get("data", {})
+    order_id = str(
+        data.get("orderId") or
+        data.get("order", {}).get("orderId") if isinstance(data.get("order"), dict) else None or
+        "?"
+    )
+    tg(f"🔍 DEBUG LIMIT {s}: order_id={order_id} | data={data}")
 
     active_limit_orders[s] = {
         "order_id":    order_id,
@@ -342,6 +349,20 @@ def limit_order_monitor():
                         if cancel.get("code") == 0:
                             tg(f"⏰ LIMIT {s} #{info['order_id']} истёк TTL → отменён")
                         active_limit_orders.pop(s, None)
+                        continue
+
+                    # Если order_id неизвестен — ищем через openOrders
+                    if info["order_id"] == "?":
+                        open_orders = bx("GET", "/openApi/swap/v2/trade/openOrders", {"symbol": s})
+                        if open_orders.get("code") == 0:
+                            orders_list = open_orders.get("data", {}).get("orders", [])
+                            # Ищем LIMIT ордер по цене
+                            for ord_item in orders_list:
+                                if ord_item.get("type") == "LIMIT" and float(ord_item.get("price", 0)) == info["limit_price"]:
+                                    info["order_id"] = str(ord_item.get("orderId", "?"))
+                                    active_limit_orders[s]["order_id"] = info["order_id"]
+                                    tg(f"🔍 LIMIT {s}: найден order_id={info['order_id']}")
+                                    break
                         continue
 
                     order_status = bx("GET", "/openApi/swap/v2/trade/order",
@@ -520,7 +541,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v14</h1>
+    <h1>🚀 Elliott Wave Bot v15</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
