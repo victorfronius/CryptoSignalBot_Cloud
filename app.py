@@ -185,19 +185,12 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
             tg(f"⚠️ LIMIT SHORT {s}: слишком далеко ({dist:.1f}%) — пропускаем")
             return
 
-    # Cooldown
-    now = time.time()
-    if now - last_trade_time.get(s, 0) < COOLDOWN_SECONDS:
-        wait_min = int((COOLDOWN_SECONDS - (now - last_trade_time[s])) / 60)
-        tg(f"⏳ LIMIT cooldown {s}: ещё {wait_min} мин")
-        return
-
-    # Проверка открытой позиции
+    # LIMIT: cooldown не применяем — только проверяем открытую позицию
     pos = bx("GET", "/openApi/swap/v2/user/positions", {})
     if pos.get("code") == 0:
         for p in pos.get("data", []):
             if p["symbol"] == s and abs(float(p.get("positionAmt", 0))) > 0:
-                tg(f"⚠️ LIMIT {s}: позиция уже открыта")
+                tg(f"⚠️ LIMIT {s}: позиция уже открыта — лимит не ставим")
                 return
 
     # Отмена старого лимита
@@ -219,7 +212,7 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
     bx("POST", "/openApi/swap/v2/trade/leverage",
        {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
 
-    # Выставляем ордер
+    # Выставляем ордер со встроенными SL/TP
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol":       s,
         "side":         si,
@@ -227,7 +220,9 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         "type":         "LIMIT",
         "price":        str(limit_price),
         "quantity":     str(qty),
-        "timeInForce":  "GTC"
+        "timeInForce":  "GTC",
+        "stopLoss":     str(sl),
+        "takeProfit":   str(tp1)
     })
 
     print(f"LIMIT ORDER RESPONSE {s}: {o}")
@@ -541,7 +536,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v15</h1>
+    <h1>🚀 Elliott Wave Bot v17</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
