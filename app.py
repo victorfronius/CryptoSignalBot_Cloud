@@ -26,7 +26,7 @@ BREAKEVEN_OFFSET_PCT     = 0.5
 BREAKEVEN_CHECK_INTERVAL = 30
 
 COOLDOWN_SECONDS   = 4 * 60 * 60
-LIMIT_ORDER_TTL    = 8 * 60 * 60
+LIMIT_ORDER_TTL    = 8 * 60 * 60   # 8 часов — 2 свечи 4H
 LIMIT_MIN_DIST_PCT = 0.1
 MAX_DIST_PCT       = 8.0
 
@@ -212,7 +212,10 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
     bx("POST", "/openApi/swap/v2/trade/leverage",
        {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
 
-    # Выставляем ордер со встроенными SL/TP
+    # Выставляем ордер со встроенными SL/TP (формат BingX)
+    import json as _json
+    sl_obj = _json.dumps({"type": "STOP_MARKET", "stopPrice": str(sl), "workingType": "MARK_PRICE"})
+    tp_obj = _json.dumps({"type": "TAKE_PROFIT_MARKET", "stopPrice": str(tp1), "workingType": "MARK_PRICE"})
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol":       s,
         "side":         si,
@@ -221,8 +224,8 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         "price":        str(limit_price),
         "quantity":     str(qty),
         "timeInForce":  "GTC",
-        "stopLoss":     str(sl),
-        "takeProfit":   str(tp1)
+        "stopLoss":     sl_obj,
+        "takeProfit":   tp_obj
     })
 
     print(f"LIMIT ORDER RESPONSE {s}: {o}")
@@ -249,7 +252,9 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         "tp1":         tp1,
         "tp2":         tp2,
         "signal":      signal_name,
-        "placed_at":   time.time()
+        "placed_at":   time.time(),
+        "zone_hi":     zone_hi,
+        "zone_lo":     zone_lo
     }
 
     dir_label = "LONG" if si == "BUY" else "SHORT"
@@ -359,6 +364,26 @@ def limit_order_monitor():
                                     tg(f"🔍 LIMIT {s}: найден order_id={info['order_id']}")
                                     break
                         continue
+
+                    # ── Проверка пробоя зоны (защита от сломанной структуры) ──
+                    zone_hi_info = info.get("zone_hi")
+                    zone_lo_info = info.get("zone_lo")
+                    cur_p = get_current_price(s)
+
+                    if cur_p is not None and zone_hi_info and zone_lo_info:
+                        zone_broken = False
+                        if info["side"] == "BUY" and cur_p < zone_lo_info:
+                            zone_broken = True
+                            tg(f"🚫 LIMIT LONG {s}: зона пробита вниз ({cur_p:.4f} < {zone_lo_info:.4f}) → отменяем")
+                        elif info["side"] == "SELL" and cur_p > zone_hi_info:
+                            zone_broken = True
+                            tg(f"🚫 LIMIT SHORT {s}: зона пробита вверх ({cur_p:.4f} > {zone_hi_info:.4f}) → отменяем")
+
+                        if zone_broken:
+                            bx("DELETE", "/openApi/swap/v2/trade/order",
+                               {"symbol": s, "orderId": info["order_id"]})
+                            active_limit_orders.pop(s, None)
+                            continue
 
                     order_status = bx("GET", "/openApi/swap/v2/trade/order",
                                       {"symbol": s, "orderId": info["order_id"]})
@@ -536,7 +561,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v17</h1>
+    <h1>🚀 Elliott Wave Bot v19</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
