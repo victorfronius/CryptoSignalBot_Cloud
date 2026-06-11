@@ -212,10 +212,8 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
     bx("POST", "/openApi/swap/v2/trade/leverage",
        {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
 
-    # Выставляем ордер со встроенными SL/TP (формат BingX)
-    import json as _json
-    sl_obj = _json.dumps({"type": "STOP_MARKET", "stopPrice": str(sl), "workingType": "MARK_PRICE"})
-    tp_obj = _json.dumps({"type": "TAKE_PROFIT_MARKET", "stopPrice": str(tp1), "workingType": "MARK_PRICE"})
+    # Выставляем лимитный ордер БЕЗ встроенных SL/TP
+    # SL/TP вешаются отдельно после исполнения через attach_sl_tp_to_filled_limit
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol":       s,
         "side":         si,
@@ -223,9 +221,7 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         "type":         "LIMIT",
         "price":        str(limit_price),
         "quantity":     str(qty),
-        "timeInForce":  "GTC",
-        "stopLoss":     sl_obj,
-        "takeProfit":   tp_obj
+        "timeInForce":  "GTC"
     })
 
     print(f"LIMIT ORDER RESPONSE {s}: {o}")
@@ -561,7 +557,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v19</h1>
+    <h1>🚀 Elliott Wave Bot v20</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
