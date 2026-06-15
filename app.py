@@ -557,7 +557,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v20</h1>
+    <h1>🚀 Elliott Wave Bot v21</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
@@ -591,7 +591,9 @@ def process_signal(d):
             return
         s        = SYMBOL_MAP[sym]
         new_side = "BUY" if action == "EXIT_LONG" else "SELL"
-        tg(f"📩 EXIT: {s} | {action}")
+        trend_bull = d.get("trend_bull", False)
+        trend_bear = d.get("trend_bear", False)
+        tg(f"📩 EXIT: {s} | {action} | Тренд 1D: {'BULL' if trend_bull else 'BEAR' if trend_bear else '—'}")
 
         pos = bx("GET", "/openApi/swap/v2/user/positions", {})
         if pos.get("code") == 0:
@@ -612,7 +614,13 @@ def process_signal(d):
                             time.sleep(1)
                         else:
                             tg(f"❌ EXIT закрытие {s}: {result.get('msg')}")
-        open_reverse_position(s, new_side)
+
+        # ── Разворот ТОЛЬКО если 1D тренд подтверждает новое направление ──
+        trend_ok = (new_side == "BUY" and trend_bull) or (new_side == "SELL" and trend_bear)
+        if trend_ok:
+            open_reverse_position(s, new_side)
+        else:
+            tg(f"⏸ EXIT {s}: разворот {('LONG' if new_side=='BUY' else 'SHORT')} отменён — против тренда 1D")
         return
 
     # ── Базовые проверки ──
