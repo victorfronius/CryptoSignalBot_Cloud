@@ -368,10 +368,11 @@ def limit_order_monitor():
 
                     if cur_p is not None and zone_hi_info and zone_lo_info:
                         zone_broken = False
-                        if info["side"] == "BUY" and cur_p < zone_lo_info:
+                        breach_buf  = 0.001  # 0.1% буфер — равенство не считается пробоем
+                        if info["side"] == "BUY" and cur_p < zone_lo_info * (1 - breach_buf):
                             zone_broken = True
                             tg(f"🚫 LIMIT LONG {s}: зона пробита вниз ({cur_p:.4f} < {zone_lo_info:.4f}) → отменяем")
-                        elif info["side"] == "SELL" and cur_p > zone_hi_info:
+                        elif info["side"] == "SELL" and cur_p > zone_hi_info * (1 + breach_buf):
                             zone_broken = True
                             tg(f"🚫 LIMIT SHORT {s}: зона пробита вверх ({cur_p:.4f} > {zone_hi_info:.4f}) → отменяем")
 
@@ -557,7 +558,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v21</h1>
+    <h1>🚀 Elliott Wave Bot v22</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
