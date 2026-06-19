@@ -361,14 +361,32 @@ def limit_order_monitor():
                                     break
                         continue
 
-                    # ── Проверка пробоя зоны (защита от сломанной структуры) ──
+                    # ── 1. Сначала проверяем статус ордера ──
+                    order_status = bx("GET", "/openApi/swap/v2/trade/order",
+                                      {"symbol": s, "orderId": info["order_id"]})
+                    if order_status.get("code") != 0:
+                        continue
+
+                    status = order_status.get("data", {}).get("order", {}).get("status", "")
+
+                    if status == "FILLED":
+                        # Ордер исполнен — немедленно вешаем SL/TP
+                        print(f"LIMIT FILLED: {s} #{info['order_id']}")
+                        attach_sl_tp_to_filled_limit(s)
+                        continue
+                    elif status in ("CANCELLED", "EXPIRED", "REJECTED"):
+                        tg(f"❌ LIMIT {s} #{info['order_id']} статус: {status}")
+                        active_limit_orders.pop(s, None)
+                        continue
+
+                    # ── 2. Ордер PENDING — проверяем пробой зоны ──
                     zone_hi_info = info.get("zone_hi")
                     zone_lo_info = info.get("zone_lo")
                     cur_p = get_current_price(s)
 
                     if cur_p is not None and zone_hi_info and zone_lo_info:
                         zone_broken = False
-                        breach_buf  = 0.001  # 0.1% буфер — равенство не считается пробоем
+                        breach_buf  = 0.001  # 0.1% буфер
                         if info["side"] == "BUY" and cur_p < zone_lo_info * (1 - breach_buf):
                             zone_broken = True
                             tg(f"🚫 LIMIT LONG {s}: зона пробита вниз ({cur_p:.4f} < {zone_lo_info:.4f}) → отменяем")
@@ -381,20 +399,6 @@ def limit_order_monitor():
                                {"symbol": s, "orderId": info["order_id"]})
                             active_limit_orders.pop(s, None)
                             continue
-
-                    order_status = bx("GET", "/openApi/swap/v2/trade/order",
-                                      {"symbol": s, "orderId": info["order_id"]})
-                    if order_status.get("code") != 0:
-                        continue
-
-                    status = order_status.get("data", {}).get("order", {}).get("status", "")
-
-                    if status == "FILLED":
-                        print(f"LIMIT FILLED: {s} #{info['order_id']}")
-                        attach_sl_tp_to_filled_limit(s)
-                    elif status in ("CANCELLED", "EXPIRED", "REJECTED"):
-                        tg(f"❌ LIMIT {s} #{info['order_id']} статус: {status}")
-                        active_limit_orders.pop(s, None)
 
                 except Exception as e:
                     print(f"limit_order_monitor inner error {s}: {e}")
@@ -558,7 +562,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v22</h1>
+    <h1>🚀 Elliott Wave Bot v23</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
