@@ -562,7 +562,7 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v23</h1>
+    <h1>🚀 Elliott Wave Bot v24</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
@@ -695,6 +695,37 @@ def process_signal(d):
     except:
         tg(m + "❌ Некорректные SL/TP")
         return
+
+    # ── Whale разворот: закрываем противоположную позицию если есть ──
+    whale_reverse = d.get("whale_reverse", False)
+    if whale_reverse:
+        pos_check = bx("GET", "/openApi/swap/v2/user/positions", {})
+        if pos_check.get("code") == 0:
+            for p in pos_check.get("data", []):
+                if p["symbol"] == s:
+                    amt = float(p.get("positionAmt", 0))
+                    if amt != 0:
+                        pos_is_long = amt > 0
+                        signal_long = action == "LONG"
+                        if pos_is_long != signal_long:
+                            # Противоположная позиция — закрываем
+                            close_side = "SELL" if amt > 0 else "BUY"
+                            result = bx("POST", "/openApi/swap/v2/trade/order", {
+                                "symbol": s, "side": close_side,
+                                "positionSide": "BOTH", "type": "MARKET",
+                                "quantity": str(abs(amt)), "reduceOnly": "true"
+                            })
+                            if result.get("code") == 0:
+                                tg(m + f"🔄 Whale разворот: закрыта {'LONG' if amt > 0 else 'SHORT'} → открываем {action}")
+                                last_trade_time[s] = 0
+                                active_positions.pop(s, None)
+                                time.sleep(1)
+                            else:
+                                tg(m + f"❌ Whale разворот: ошибка закрытия — {result.get('msg')}")
+                                return
+                        else:
+                            tg(m + f"⏸ Whale {s}: позиция уже {action} — пропускаем")
+                            return
 
     now  = time.time()
     last = last_trade_time.get(s, 0)
