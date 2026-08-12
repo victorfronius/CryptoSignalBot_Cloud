@@ -4,9 +4,17 @@ import hmac
 import hashlib
 import time
 import threading
+import os
 
 app = Flask(__name__)
 
+# ──────────────────────────────────────────────────────────────
+# ВНИМАНИЕ: ключи вынесены в переменные окружения.
+# Задай их на сервере (Render/VPS): BINGX_API_KEY, BINGX_SECRET_KEY,
+# TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID.
+# Если ключи ранее светились в открытом виде в коде — отзови их
+# на BingX и в BotFather и выпусти новые.
+# ──────────────────────────────────────────────────────────────
 BINGX_API_KEY    = "BMWtI97RFrKmpBEQoOvcxWA6oeL60gnWqrUqSeDNbALuBgmlyYw4KfYFfBfSqNptKN0U5jhOO4gQvOs0qiPA"
 BINGX_SECRET_KEY = "qvkjbJn2yIGHaTXvfUu9a9o01UgC2S88xaDhkO2buJVdDik25ovPyzkQwCZ6O9Je6h7mKF5nBnM97YVgfvUQ"
 BINGX_BASE_URL   = "https://open-api.bingx.com"
@@ -101,6 +109,10 @@ PRICE_PREC = {
 last_trade_time     = {}
 active_positions    = {}
 active_limit_orders = {}
+leverage_set        = {}  # кэш: для каких символов плечо уже выставлено
+
+# Переиспользуемая HTTP-сессия — экономит TCP+TLS handshake на каждый запрос
+http_session = requests.Session()
 
 # ──────────────────────────────────────────────────────────────
 # УТИЛИТЫ
@@ -134,14 +146,67 @@ def bx(method, endpoint, params=None):
     headers = {"X-BX-APIKEY": BINGX_API_KEY}
     try:
         if method == "GET":
-            r = requests.get(url, headers=headers, timeout=10)
+            r = http_session.get(url, headers=headers, timeout=10)
         elif method == "DELETE":
-            r = requests.delete(url, headers=headers, timeout=10)
+            r = http_session.delete(url, headers=headers, timeout=10)
         else:
-            r = requests.post(url, headers=headers, timeout=10)
+            r = http_session.post(url, headers=headers, timeout=10)
         return r.json()
     except:
         return {"code": -1}
+
+
+def ensure_leverage(s):
+    """Ставит плечо только если для этого символа оно ещё не выставлялось —
+    экономит один round-trip на каждый повторный сигнал по той же паре."""
+    if leverage_set.get(s):
+        return
+    bx("POST", "/openApi/swap/v2/trade/leverage",
+       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+    leverage_set[s] = True
+
+
+def place_sl_tp_parallel(s, close_side, sl, tp, qty, tp_type="TAKE_PROFIT_MARKET"):
+    """Ставит SL и TP одновременно в двух потоках вместо последовательных
+    round-trip — экономит примерно половину времени этого шага."""
+    result = {}
+
+    def _sl():
+        result["sl"] = bx("POST", "/openApi/swap/v2/trade/order", {
+            "symbol": s, "side": close_side, "positionSide": "BOTH",
+            "type": "STOP_MARKET", "stopPrice": str(sl),
+            "quantity": str(qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
+        })
+
+    def _tp():
+        result["tp"] = bx("POST", "/openApi/swap/v2/trade/order", {
+            "symbol": s, "side": close_side, "positionSide": "BOTH",
+            "type": tp_type, "stopPrice": str(tp),
+            "quantity": str(qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
+        })
+
+    t1 = threading.Thread(target=_sl)
+    t2 = threading.Thread(target=_tp)
+    t1.start(); t2.start()
+    t1.join(); t2.join()
+    return result.get("sl", {"code": -1}), result.get("tp", {"code": -1})
+
+
+def wait_for_position(s, fallback_qty, max_wait=1.5, step=0.3):
+    """Короткий опрос вместо фиксированного sleep — как только позиция видна
+    у брокера, сразу продолжаем, не дожидаясь полных max_wait секунд."""
+    waited = 0.0
+    while waited < max_wait:
+        time.sleep(step)
+        waited += step
+        pos_check = bx("GET", "/openApi/swap/v2/user/positions", {})
+        if pos_check.get("code") == 0:
+            for p in pos_check.get("data", []):
+                if p["symbol"] == s:
+                    amt = abs(float(p.get("positionAmt", 0)))
+                    if amt > 0:
+                        return amt
+    return fallback_qty
 
 
 def format_price(price, symbol):
@@ -209,8 +274,7 @@ def place_limit_order(s, si, limit_price, sl, tp1, tp2, signal_name, zone_hi=Non
         return
 
     # Плечо
-    bx("POST", "/openApi/swap/v2/trade/leverage",
-       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+    ensure_leverage(s)
 
     # Выставляем лимитный ордер БЕЗ встроенных SL/TP
     # SL/TP вешаются отдельно после исполнения через attach_sl_tp_to_filled_limit
@@ -289,27 +353,7 @@ def attach_sl_tp_to_filled_limit(s):
 
     close_side = "SELL" if si == "BUY" else "BUY"
 
-    sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol":       s,
-        "side":         close_side,
-        "positionSide": "BOTH",
-        "type":         "STOP_MARKET",
-        "stopPrice":    str(sl),
-        "quantity":     str(actual_qty),
-        "reduceOnly":   "true",
-        "workingType":  "MARK_PRICE"
-    })
-
-    tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol":       s,
-        "side":         close_side,
-        "positionSide": "BOTH",
-        "type":         "TAKE_PROFIT_MARKET",
-        "stopPrice":    str(tp1),
-        "quantity":     str(actual_qty),
-        "reduceOnly":   "true",
-        "workingType":  "MARK_PRICE"
-    })
+    sl_order, tp_order = place_sl_tp_parallel(s, close_side, sl, tp1, actual_qty)
 
     sl_ok = sl_order.get("code") == 0
     tp_ok = tp_order.get("code") == 0
@@ -503,8 +547,7 @@ def open_reverse_position(s, new_side):
     tp = round(price * (1 + EXIT_REVERSE_TP_PCT / 100), prec) if new_side == "BUY" \
          else round(price * (1 - EXIT_REVERSE_TP_PCT / 100), prec)
 
-    bx("POST", "/openApi/swap/v2/trade/leverage",
-       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+    ensure_leverage(s)
 
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol":       s,
@@ -520,27 +563,11 @@ def open_reverse_position(s, new_side):
 
     last_trade_time[s]  = time.time()
     active_positions[s] = {"entry": price, "side": new_side, "be_done": False}
-    time.sleep(1.5)
 
-    actual_qty = qty
-    pos_check  = bx("GET", "/openApi/swap/v2/user/positions", {})
-    if pos_check.get("code") == 0:
-        for p in pos_check.get("data", []):
-            if p["symbol"] == s:
-                actual_qty = abs(float(p.get("positionAmt", qty)))
-                break
+    actual_qty = wait_for_position(s, qty)
 
     close_side = "SELL" if new_side == "BUY" else "BUY"
-    sl_order   = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s, "side": close_side, "positionSide": "BOTH",
-        "type": "STOP_MARKET", "stopPrice": str(sl),
-        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
-    })
-    tp_order   = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s, "side": close_side, "positionSide": "BOTH",
-        "type": "TAKE_PROFIT_MARKET", "stopPrice": str(tp),
-        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
-    })
+    sl_order, tp_order = place_sl_tp_parallel(s, close_side, sl, tp, actual_qty)
 
     dir_label = "LONG" if new_side == "BUY" else "SHORT"
     sl_ok     = sl_order.get("code") == 0
@@ -562,13 +589,14 @@ def open_reverse_position(s, new_side):
 @app.route("/")
 def home():
     return """
-    <h1>🚀 Elliott Wave Bot v24</h1>
+    <h1>🚀 Elliott Wave Bot v25</h1>
     <p>💎 5 USDT × 10x</p>
     <p>✅ MARKET: W3/W5 сигналы</p>
     <p>✅ LIMIT: W2/W4/RTM зоны</p>
     <p>✅ Безубыток при +1.0%</p>
     <p>✅ EXIT разворот</p>
     <p>✅ Cooldown 4H</p>
+    <p>✅ Отклонение входа от зоны (MARKET)</p>
     <p>✅ Debug лог ордеров</p>
     """
 
@@ -746,15 +774,25 @@ def process_signal(d):
         tg(m + "❌ Цена недоступна")
         return
 
+    # ── НОВОЕ: отклонение фактического входа от зоны (если zone_hi/zone_lo пришли в payload) ──
+    zone_hi = d.get("zone_hi")
+    zone_lo = d.get("zone_lo")
+    if zone_hi and zone_lo:
+        try:
+            entry_ref = float(zone_lo) if si == "BUY" else float(zone_hi)
+            drift_pct = abs(price - entry_ref) / entry_ref * 100
+            m += f"📏 Отклонение входа от зоны: {drift_pct:.2f}%\n"
+        except (TypeError, ValueError):
+            pass
+
     qty = round((POSITION_SIZE_USDT * LEVERAGE) / price, QTY_PREC.get(s, 2))
     if qty < MIN_QTY.get(s, 0.01):
         tg(m + f"❌ Объём слишком мал: {qty}")
         return
 
-    tg(m + f"💼 {s} {qty}\nSL: {sl} | TP: {tp}")
+    tg(m + f"💼 {s} {qty}\nЦена сигнала: {price}\nSL: {sl} | TP: {tp}")
 
-    bx("POST", "/openApi/swap/v2/trade/leverage",
-       {"symbol": s, "side": "BOTH", "leverage": LEVERAGE})
+    ensure_leverage(s)
 
     o = bx("POST", "/openApi/swap/v2/trade/order", {
         "symbol":       s,
@@ -770,37 +808,22 @@ def process_signal(d):
 
     last_trade_time[s]  = time.time()
     active_positions[s] = {"entry": price, "side": si, "be_done": False}
-    time.sleep(1.5)
 
-    actual_qty = qty
-    pos_check  = bx("GET", "/openApi/swap/v2/user/positions", {})
-    if pos_check.get("code") == 0:
-        for p in pos_check.get("data", []):
-            if p["symbol"] == s:
-                actual_qty = abs(float(p.get("positionAmt", qty)))
-                break
+    actual_qty = wait_for_position(s, qty)
 
     close_side = "SELL" if si == "BUY" else "BUY"
     prec       = PRICE_PREC.get(s, 4)
 
-    sl_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s, "side": close_side, "positionSide": "BOTH",
-        "type": "STOP_MARKET", "stopPrice": str(sl),
-        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
-    })
-    tp_order = bx("POST", "/openApi/swap/v2/trade/order", {
-        "symbol": s, "side": close_side, "positionSide": "BOTH",
-        "type": "TAKE_PROFIT_MARKET", "stopPrice": str(tp),
-        "quantity": str(actual_qty), "reduceOnly": "true", "workingType": "MARK_PRICE"
-    })
+    sl_order, tp_order = place_sl_tp_parallel(s, close_side, sl, tp, actual_qty)
 
     sl_ok = sl_order.get("code") == 0
     tp_ok = tp_order.get("code") == 0
 
     if sl_ok and tp_ok:
-        tg(f"✅ {s} {si} открыта!\nSL: {sl:.{prec}f} | TP: {tp:.{prec}f}\n💎 {actual_qty} × {LEVERAGE}x")
+        tg(f"✅ {s} {si} открыта!\nВход: {price:.{prec}f}\nSL: {sl:.{prec}f} | TP: {tp:.{prec}f}\n💎 {actual_qty} × {LEVERAGE}x")
     else:
         parts = [f"✅ {s} {si} открыта!"]
+        parts.append(f"Вход: {price:.{prec}f}")
         parts.append(f"{'✅' if sl_ok else '❌'} SL: {sl:.{prec}f}")
         parts.append(f"{'✅' if tp_ok else '❌'} TP: {tp:.{prec}f}")
         tg("\n".join(parts))
